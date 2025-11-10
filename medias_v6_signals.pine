@@ -1,0 +1,574 @@
+//@version=6
+//© diegosantacruz
+indicator("MEDIAS MOVILES v6 + SIGNALS",shorttitle="MEDIASv6+SIGNALS",overlay=true, max_bars_back=3000)
+
+// ======== Custom Types =========
+
+type MAResult
+    float value
+    string label
+
+// ======== Indicator Input Parameters =========
+
+linew       = 2  // line width for moving averages.
+
+var string G_DAILY = "►► Daily Moving Average"
+bool    ma_c_enable         = input(inline = "01", group = G_DAILY,  defval=true, title="MM1")
+string  ma_c                = input.string(inline = "01", group = G_DAILY,  defval="ASL", title="", options=["WMA","EMA","SMA","ASL","HMA","L_EMAS_AVG"])
+int     len_c               = input.int(inline = "01", group = G_DAILY, defval=21, minval=1, title="Length:")
+color   col_c               = input(inline = "01", group = G_DAILY,  defval=color.blue,title="")
+
+bool    ma_i_enable         = input(inline = "02", group = G_DAILY,  defval=true, title="MM2")
+string  ma_i                = input.string(inline = "02", group = G_DAILY,  defval="EMA", title="", options=["WMA","EMA","SMA","ASL","HMA","L_EMAS_AVG"])
+int     len_i               = input.int(inline = "02", group = G_DAILY, defval=150, minval=1, title="Length:")
+color   col_i               = input(inline = "02", group = G_DAILY,  defval=color.red, title="")
+
+bool    ma_l_enable         = input(inline = "03", group = G_DAILY,  defval=true, title="MM3")
+string  ma_l                = input.string(inline = "03", group = G_DAILY,  defval="EMA", title="", options=["WMA","EMA","SMA","ASL","HMA","L_EMAS_AVG"])
+int     len_l               = input.int(inline = "03", group = G_DAILY, defval=200, minval=1, title="Length:")
+color   col_l               = input(inline = "03", group = G_DAILY,  defval=color.orange,title="")
+
+bool    ma_a_enable         = input(inline = "04", group = G_DAILY,  defval=true, title="MM4")
+string  ma_a                = input.string(inline = "04", group = G_DAILY,  defval="SMA", title="", options=["WMA","EMA","SMA","ASL","HMA","L_EMAS_AVG"])
+int     len_a               = input.int(inline = "04", group = G_DAILY, defval=30, minval=1, title="Length:")
+color   col_a               = input(inline = "04", group = G_DAILY,  defval=color.green,title="")
+
+var string G_WEEKLY = "►► Weekly Moving Average"
+bool    w_ma_c_enable         = input(inline = "01", group = G_WEEKLY,  defval=true, title="MM1")
+string  w_ma_c                = input.string(inline = "01", group = G_WEEKLY,  defval="WMA", title="", options=["WMA","EMA","SMA","ASL","HMA"])
+int     w_len_c               = input.int(inline = "01", group = G_WEEKLY, defval=10, minval=1, title="Length:")
+color   w_col_c               = input(inline = "01", group = G_WEEKLY,  defval=color.blue,title="")
+
+bool    w_ma_i_enable         = input(inline = "02", group = G_WEEKLY,  defval=true, title="MM2")
+string  w_ma_i                = input.string(inline = "02", group = G_WEEKLY,  defval="WMA", title="", options=["WMA","EMA","SMA","ASL","HMA"])
+int     w_len_i               = input.int(inline = "02", group = G_WEEKLY, defval=30, minval=1, title="Length:")
+color   w_col_i               = input(inline = "02", group = G_WEEKLY,  defval=color.orange, title="")
+
+bool    w_ma_l_enable         = input(inline = "03", group = G_WEEKLY,  defval=true, title="MM3")
+string  w_ma_l                = input.string(inline = "03", group = G_WEEKLY,  defval="SMA", title="", options=["WMA","EMA","SMA","ASL","HMA"])
+int     w_len_l               = input.int(inline = "03", group = G_WEEKLY, defval=200, minval=1, title="Length:")
+color   w_col_l               = input(inline = "03", group = G_WEEKLY,  defval=color.green,title="")
+
+bool    w_ma_a_enable         = input(inline = "04", group = G_WEEKLY,  defval=true, title="MM4")
+string  w_ma_a                = input.string(inline = "04", group = G_WEEKLY,  defval="WMA", title="", options=["WMA","EMA","SMA","ASL","HMA","L_EMAS_AVG"])
+int     w_len_a               = input.int(inline = "04", group = G_WEEKLY, defval=50, minval=1, title="Length:")
+color   w_col_a               = input(inline = "04", group = G_WEEKLY,  defval=color.red,title="")
+
+var string G_MONTHLY = "►► Monthly Moving Average"
+bool    m_ma_c_enable         = input(inline = "01", group = G_MONTHLY,  defval=true, title="MM1")
+string  m_ma_c                = input.string(inline = "01", group = G_MONTHLY,  defval="WMA", title="", options=["WMA","EMA","SMA","ASL","HMA"])
+int     m_len_c               = input.int(inline = "01", group = G_MONTHLY, defval=12, minval=1, title="Length:")
+color   m_col_c               = input(inline = "01", group = G_MONTHLY,  defval=color.orange,title="")
+
+bool    m_ma_l_enable         = input(inline = "02", group = G_MONTHLY,  defval=false, title="MM2")
+string  m_ma_l                = input.string(inline = "02", group = G_MONTHLY,  defval="SMA", title="", options=["WMA","EMA","SMA","ASL","HMA"])
+int     m_len_l               = input.int(inline = "02", group = G_MONTHLY, defval=12, minval=1, title="Length:")
+color   m_col_l               = input(inline = "02", group = G_MONTHLY,  defval=color.olive,title="")
+
+
+var color TBL_TXT             = color.white
+var color TBL_BG              = #000000
+var string TXT_SIZE           = 'auto'
+
+var string G_TABLE = '►► Moving Average and 2Sigma Table (Position & Size)'
+bool    i_table_enable        = input.bool(true, inline='01', group=G_TABLE, title = "Enable?  | ")
+string  i_tableYpos           = input.string('bottom', '↕', inline='01', group=G_TABLE, options=['top', 'middle', 'bottom'])
+string  i_tableXpos           = input.string('right', '↔', inline='01', group=G_TABLE, options=['left', 'center', 'right'], tooltip='Position on the chart.')
+color   i_c_tableText         = input.color(TBL_TXT, 'Text', inline='03', group=G_TABLE)
+color   i_c_tableBg           = input.color(TBL_BG, 'Background', inline='03', group=G_TABLE)
+string  i_tableTextSize       = input.string(TXT_SIZE, '', inline='03', group=G_TABLE, options=['tiny', 'small', 'normal', 'large', 'huge', 'auto'])
+
+var string G_TABLEADD = '►► Table Additional Information'
+bool    unify_emas            = input.bool(true, inline='01', group=G_TABLEADD, title = "Smart Unify Daily EMAS 150 & 200?", tooltip='Consolidate the two percentages in one to show the distance from close price to the long EMAS.')
+
+cell_1  ='2σ Dispersion'
+cell_2  = 'β-5Y'
+cell_3  = 'Div Yield FQ'
+
+var string G_SIGMAF = '►► 2Sigma and Bollinger Band Format'
+string   sigma_bb_format       = input.string('0-100 inside band',inline='01', group=G_SIGMAF, title = "2σ and BB Format:", options=['0-100 inside band','% to up/dn band'])
+
+var string G_TABLEPARAM = '►► Beta & ATR Indicator Parameters'
+string   beta_baseline        = input.string('SPY', inline='01', group=G_TABLEPARAM, title = "β Index or Benchmark:")
+int      beta_years           = input.int(5, inline='01', group=G_TABLEPARAM, title = "Window Years:")
+
+var string G_SIGNALS = '►► Buy/Sell Signals'
+bool    enable_signals        = input.bool(true, inline='01', group=G_SIGNALS, title = "Enable Signals?")
+bool    signal_mm1            = input.bool(true, inline='02', group=G_SIGNALS, title = "MM1 Crossover Signal")
+bool    signal_rsi            = input.bool(true, inline='03', group=G_SIGNALS, title = "RSI Oversold/Overbought Signal")
+bool    signal_emas           = input.bool(true, inline='04', group=G_SIGNALS, title = "Long EMAs Crossover Signal")
+int     rsi_oversold          = input.int(30, inline='05', group=G_SIGNALS, title = "RSI Oversold Level:", minval=1, maxval=49)
+int     rsi_overbought        = input.int(70, inline='05', group=G_SIGNALS, title = "Overbought:", minval=51, maxval=99)
+
+var color TBL_TXT2 = color.white
+var color TBL_BG2 = #363A45
+var string TXT_SIZE2 = 'auto'
+
+var string COMMENT = 'EMAs = EMA(200)+EMA(150) / 2 (not adjusted by dividens) '
+
+// ======== Custom Methods =========
+
+// Variation vs price - custom method for float
+method variation(float price, float ma_value) =>
+    (price - ma_value) / price
+
+// Return percentage change for beta calculation
+method returnPercent(float src) =>
+    ta.change(src) * 100 / src[1]
+
+// ======== Functions Library =========
+
+// Calculate moving average with switch expression (v6 enhancement)
+moving_avg(string type, int len) =>
+    float value = switch type
+        "ASL" => (ta.ema(close, len-1) + ta.wma(close, len)) / 2
+        "EMA" => ta.ema(close, len)
+        "WMA" => ta.wma(close, len)
+        "HMA" => ta.hma(close, len)
+        "L_EMAS_AVG" => (ta.ema(close, len) + ta.ema(close, len+50)) / 2
+        => ta.sma(close, len)  // default case for "SMA" or anything else
+
+    string label_text = type + str.tostring(len, "#")
+    MAResult.new(value, label_text)
+
+// Sigma calculation - 2 standard deviations
+sigma2(float variation) =>
+    int lookback = bar_index > 3000 ? 3000 : (timeframe.isweekly or timeframe.ismonthly) ? 200 : 1000
+    ta.stdev(variation, lookback) * 2
+
+// Background color for moving average cells based on variation and sigma
+bg_mm(float variation, float sigma) =>
+    if variation > 0
+        math.abs(variation) > sigma ? color.lime : color.green
+    else
+        math.abs(variation) > sigma ? #ff0000 : #ad2323
+
+// RSI background color coding
+bg_rsi(float r) =>
+    switch
+        r > 70 => color.red
+        r < 30 => color.green
+        r < 35 => #67Eb65
+        r > 65 => #F2A09D
+        r > 48 and r < 52 => color.olive
+        => color.gray
+
+// 2-Sigma background and foreground colors
+bg_sigma2(float x) => x < 0 ? #fffbbf : color.gray
+fg_sigma2(float x) => x < 0 ? #ff0000 : i_c_tableText
+
+// Beta risk categorization with color coding
+bg_beta(float b) =>
+    switch
+        b < 0 => color.blue
+        b <= 1 => color.green
+        b >= 3 => #ff0000
+        b >= 1.7 => #ad2323
+        => color.olive
+
+// Dividend Yield background
+bg_div(float x) =>
+    switch
+        x == 0 => color.gray
+        x < 3 => color.blue
+        x < 5 => color.olive
+        x < 10 => color.green
+        => color.lime
+
+// Bollinger Band %B style coloring (0-100 format)
+bg_percentage_BB(float x) =>
+    switch
+        x < 0 or x > 100 => #fffbbf
+        x < 10 => #30CC5A
+        x > 90 => #F63538
+        => color.gray
+
+fg_percentage_BB(float x) =>
+    switch
+        x < 0 => color.green
+        x > 100 => #ff0000
+        => i_c_tableText
+
+// Identify ticker with spread operations
+spread_symbol(string x) =>
+    str.contains(x, "+") or str.contains(x, "-") or str.contains(x, "/") or str.contains(x, "*") or str.contains(x, "(")
+
+// Table cell output helper
+print_cell(table tbl, int col, string title_txt, color color_txt_tit, color color_bg_tit,
+           string value_txt, color color_txt_val, color color_bg_val, string txt_size) =>
+    if barstate.islast
+        table.cell(tbl, col, 0, title_txt, bgcolor = color_bg_tit, text_color = color_txt_tit, text_size = txt_size)
+        table.cell(tbl, col, 1, value_txt, bgcolor = color_bg_val, text_color = color_txt_val, text_size = txt_size)
+
+// Check if condition matches any of three values (optimization helper)
+included(string x, string a, string b, string c) => x == a or x == b or x == c
+
+// ETF ticker list for dividend calculation
+ETFs_tickers = ' SPY QQQ DIA EWZ XLF XLE XLB XLV XLH XLK XLC XLY XLP XLI XLRE XLU MCHI VGLT VIG VYM VNQ SCHD IWM '
+IsETF(string x) => str.contains(ETFs_tickers, " " + x + " ")
+
+// ====== End Functions Library =======
+
+// ++++++++++++++++++  Moving Average Calculations
+
+// Daily MAs
+MAResult mm1 = moving_avg(ma_c, len_c)
+plot(timeframe.isdaily and ma_c_enable ? mm1.value : na, color=col_c, linewidth=linew)
+
+MAResult mm2 = moving_avg(ma_i, len_i)
+plot(timeframe.isdaily and ma_i_enable ? mm2.value : na, color=col_i, linewidth=linew)
+
+MAResult mm3 = moving_avg(ma_l, len_l)
+plot(timeframe.isdaily and ma_l_enable ? mm3.value : na, color=col_l, linewidth=linew)
+
+MAResult mm4 = moving_avg(ma_a, len_a)
+plot(timeframe.isdaily and ma_a_enable ? mm4.value : na, color=col_a, linewidth=linew)
+
+// Daily MA labels
+if barstate.islast and timeframe.isdaily
+    if ma_c_enable
+        label.new(x=time, y=mm1.value, text=mm1.label, xloc=xloc.bar_time, yloc=yloc.price,
+                  color=color.rgb(0, 0, 0, 100), style=label.style_label_left, textcolor=col_c, size=size.small)
+    if ma_i_enable
+        label.new(x=time, y=mm2.value, text=mm2.label, xloc=xloc.bar_time, yloc=yloc.price,
+                  color=color.rgb(0, 0, 0, 100), style=label.style_label_left, textcolor=col_i, size=size.small)
+    if ma_l_enable
+        label.new(x=time, y=mm3.value, text=mm3.label, xloc=xloc.bar_time, yloc=yloc.price,
+                  color=color.rgb(0, 0, 0, 100), style=label.style_label_left, textcolor=col_l, size=size.small)
+    if ma_a_enable
+        label.new(x=time, y=mm4.value, text=mm4.label, xloc=xloc.bar_time, yloc=yloc.price,
+                  color=color.rgb(0, 0, 0, 100), style=label.style_label_left, textcolor=col_a, size=size.small)
+
+// Daily MA alerts
+float avgEMAs = (mm2.value + mm3.value) / 2
+xUpMM1 = ta.crossover(close, mm1.value)
+xDnMM1 = ta.crossunder(close, mm1.value)
+xUpEMA = ta.crossover(close, avgEMAs)
+xDnEMA = ta.crossunder(close, avgEMAs)
+
+if timeframe.isdaily and xUpMM1
+    alert(syminfo.ticker + " crossing UP " + mm1.label + " (short MA)")
+if timeframe.isdaily and xDnMM1
+    alert(syminfo.ticker + " crossing DOWN " + mm1.label + " (short MA)")
+if timeframe.isdaily and xUpEMA
+    alert(syminfo.ticker + " crossing UP EMAs (avg EMA150,EMA200)")
+if timeframe.isdaily and xDnEMA
+    alert(syminfo.ticker + " crossing DOWN EMAs (avg EMA150,EMA200)")
+
+alertcondition(xUpMM1 or xDnMM1, title="Daily Price x MA1", message="Crossing MA1")
+alertcondition(xUpEMA or xDnEMA, title="Daily Price x Avg(MM2,MM3)", message="Crossing Big EMAs")
+
+// Weekly MAs
+MAResult w_mm1 = moving_avg(w_ma_c, w_len_c)
+plot(timeframe.isweekly and w_ma_c_enable ? w_mm1.value : na, color=w_col_c, linewidth=linew)
+
+MAResult w_mm2 = moving_avg(w_ma_i, w_len_i)
+plot(timeframe.isweekly and w_ma_i_enable ? w_mm2.value : na, color=w_col_i, linewidth=linew)
+
+MAResult w_mm3 = moving_avg(w_ma_l, w_len_l)
+plot(timeframe.isweekly and w_ma_l_enable ? w_mm3.value : na, color=w_col_l, linewidth=linew)
+
+MAResult w_mm4 = moving_avg(w_ma_a, w_len_a)
+plot(timeframe.isweekly and w_ma_a_enable ? w_mm4.value : na, color=w_col_a, linewidth=linew)
+
+// Weekly MA labels
+if barstate.islast and timeframe.isweekly
+    if w_ma_c_enable
+        label.new(x=time, y=w_mm1.value, text=w_mm1.label, xloc=xloc.bar_time, yloc=yloc.price,
+                  color=color.rgb(0, 0, 0, 100), style=label.style_label_left, textcolor=w_col_c, size=size.small)
+    if w_ma_i_enable
+        label.new(x=time, y=w_mm2.value, text=w_mm2.label, xloc=xloc.bar_time, yloc=yloc.price,
+                  color=color.rgb(0, 0, 0, 100), style=label.style_label_left, textcolor=w_col_i, size=size.small)
+    if w_ma_l_enable
+        label.new(x=time, y=w_mm3.value, text=w_mm3.label, xloc=xloc.bar_time, yloc=yloc.price,
+                  color=color.rgb(0, 0, 0, 100), style=label.style_label_left, textcolor=w_col_l, size=size.small)
+    if w_ma_a_enable
+        label.new(x=time, y=w_mm4.value, text=w_mm4.label, xloc=xloc.bar_time, yloc=yloc.price,
+                  color=color.rgb(0, 0, 0, 100), style=label.style_label_left, textcolor=w_col_a, size=size.small)
+
+// Monthly MAs
+MAResult m_mm1 = moving_avg(m_ma_c, m_len_c)
+plot(timeframe.ismonthly and m_ma_c_enable ? m_mm1.value : na, color=m_col_c, linewidth=linew)
+
+MAResult m_mm2 = moving_avg(m_ma_l, m_len_l)
+plot(timeframe.ismonthly and m_ma_l_enable ? m_mm2.value : na, color=m_col_l, linewidth=linew)
+
+// ***** TABLE SETUP
+
+// Calculate variations once (performance optimization)
+var float v_mm1 = na, var float v_mm2 = na, var float v_mm3 = na, var float v_mm4 = na
+var float v_w_mm1 = na, var float v_w_mm2 = na, var float v_w_mm3 = na, var float v_w_mm4 = na
+var float v_m_mm1 = na, var float v_m_mm2 = na
+
+if barstate.islast
+    v_mm1 := close.variation(mm1.value)
+    v_mm2 := close.variation(mm2.value)
+    v_mm3 := close.variation(mm3.value)
+    v_mm4 := close.variation(mm4.value)
+    v_w_mm1 := close.variation(w_mm1.value)
+    v_w_mm2 := close.variation(w_mm2.value)
+    v_w_mm3 := close.variation(w_mm3.value)
+    v_w_mm4 := close.variation(w_mm4.value)
+    v_m_mm1 := close.variation(m_mm1.value)
+    v_m_mm2 := close.variation(m_mm2.value)
+
+// Smart unification of EMAs 150 & 200
+bool do_unify_emas = unify_emas and timeframe.isdaily and ma_i_enable and ma_l_enable and
+                     len_i == 150 and len_l == 200 and ma_i == "EMA" and ma_l == "EMA" and
+                     math.abs(v_mm2 - v_mm3) / (math.abs(v_mm2 + v_mm3) / 2) < 0.2 and
+                     bg_mm(v_mm2, sigma2(v_mm2)) == bg_mm(v_mm3, sigma2(v_mm3))
+
+// Calculate total columns
+int total_col = 1  // RSI column
+total_col += timeframe.isdaily ? ((ma_c_enable ? 1 : 0) + (ma_i_enable ? 1 : 0) + (ma_l_enable ? 1 : 0) + (ma_a_enable ? 1 : 0)) : 0
+total_col += do_unify_emas ? -1 : 0
+total_col += timeframe.isweekly ? ((w_ma_c_enable ? 1 : 0) + (w_ma_i_enable ? 1 : 0) + (w_ma_l_enable ? 1 : 0) + (w_ma_a_enable ? 1 : 0)) : 0
+total_col += timeframe.ismonthly ? ((m_ma_c_enable ? 1 : 0) + (m_ma_l_enable ? 1 : 0)) : 0
+
+// Additional info columns
+total_col += cell_1 == 'None' ? 0 : 1
+total_col += cell_2 == 'None' ? 0 : 1
+total_col += cell_3 == 'None' ? 0 : 1
+
+// Table border and frame sizing
+int border = switch i_tableTextSize
+    "tiny" => 0
+    "small" => 1
+    "normal" => 2
+    => 3
+
+int frame = switch i_tableTextSize
+    "tiny" => 1
+    "small" => 2
+    "normal" => 3
+    => 4
+
+var table display = table.new(i_tableYpos + '_' + i_tableXpos, total_col, 2, border_width=border,
+                               frame_width=frame, frame_color=i_c_tableBg, border_color=i_c_tableBg)
+
+// ++++++++++++++++++++++++++ Beta Calculation
+
+var float beta = na
+int smooth = 1
+int length = switch
+    timeframe.ismonthly => 12 * beta_years + 1
+    timeframe.isweekly => 52 * beta_years + 1
+    timeframe.isdaily => 252 * beta_years + 1
+    => 300
+
+bool is_spread = spread_symbol(syminfo.ticker)
+float instrument = not is_spread ? request.security(syminfo.tickerid, 'M', ta.ema(close, smooth)) : na
+float benchmark = not is_spread ? request.security(beta_baseline, 'M', ta.ema(close, smooth)) : na
+
+float inst_return = instrument.returnPercent()
+float bench_return = benchmark.returnPercent()
+float avg_inst_return = ta.sma(inst_return, length)
+float avg_bench_return = ta.sma(bench_return, length)
+
+var float covariance = na
+if barstate.islast and not is_spread
+    float sum = 0.0
+    for idx = length to 0 by 1
+        float inst_variance = inst_return[idx] - avg_inst_return
+        float bench_variance = bench_return[idx] - avg_bench_return
+        sum += inst_variance * bench_variance
+    covariance := sum / (length - 1)
+    beta := covariance / ta.variance(bench_return, length)
+
+// ++++++++++++++++++++++++++ Dividend Yield
+
+string temp_ticker = spread_symbol(syminfo.tickerid) ? "NASDAQ:TSLA" : syminfo.tickerid
+var float _divYield = na
+
+if barstate.islast
+    _divYield := request.financial(temp_ticker, "DIVIDENDS_YIELD", "FQ", ignore_invalid_symbol=true)
+
+    if IsETF(syminfo.ticker)
+        float s1 = request.dividends(temp_ticker)
+        _divYield := (s1[0] + s1[1] + s1[2] + s1[3]) / close * 100
+
+// ++++++++++++++++++++++++++  2-Sigma Dispersion
+
+var float bb_2sigma = na
+var float d = na
+
+if barstate.islast and (sigma_bb_format == '0-100 inside band')
+    float mid2sigma = switch
+        timeframe.isdaily => mm1.value
+        timeframe.isweekly => w_mm1.value
+        timeframe.ismonthly => m_mm1.value
+        => na
+
+    float bandwidth2sigma = switch
+        timeframe.isdaily => sigma2(v_mm1)
+        timeframe.isweekly => sigma2(v_w_mm1)
+        timeframe.ismonthly => sigma2(v_m_mm1)
+        => na
+
+    float upbb2 = mid2sigma + bandwidth2sigma * close
+    float dnbb2 = mid2sigma - bandwidth2sigma * close
+    bb_2sigma := (close - dnbb2) / (upbb2 - dnbb2) * 100
+
+if barstate.islast and (sigma_bb_format == '% to up/dn band')
+    d := switch
+        timeframe.isdaily => math.abs(sigma2(v_mm1)) - math.abs(v_mm1)
+        timeframe.isweekly => math.abs(sigma2(v_w_mm1)) - math.abs(v_w_mm1)
+        timeframe.ismonthly => math.abs(sigma2(v_m_mm1)) - math.abs(v_m_mm1)
+        => na
+
+// ++++++++++++++++++++++++++ Print Table with Moving Average Variations
+
+int i = 0
+float rsi_value = ta.rsi(close, 14)
+
+if timeframe.isdaily and i_table_enable and barstate.islast
+    color bg_mm2 = nz(bg_mm(v_mm2, sigma2(v_mm2)), color.gray)
+    color bg_mm3 = nz(bg_mm(v_mm3, sigma2(v_mm3)), color.gray)
+
+    if ma_c_enable
+        print_cell(display, i, mm1.label, i_c_tableText, i_c_tableBg,
+                   str.tostring(v_mm1, '#.#%'), i_c_tableText, bg_mm(v_mm1, sigma2(v_mm1)), i_tableTextSize)
+        i += 1
+
+    if ma_i_enable and not do_unify_emas
+        print_cell(display, i, mm2.label, i_c_tableText, i_c_tableBg,
+                   str.tostring(v_mm2, '#.#%'), i_c_tableText, bg_mm2, i_tableTextSize)
+        i += 1
+
+    if ma_l_enable and not do_unify_emas
+        print_cell(display, i, mm3.label, i_c_tableText, i_c_tableBg,
+                   str.tostring(v_mm3, '#.#%'), i_c_tableText, bg_mm3, i_tableTextSize)
+        i += 1
+
+    if do_unify_emas
+        float unified_var = (mm2.value > close) ? math.max(v_mm2, v_mm3) : math.min(v_mm2, v_mm3)
+        print_cell(display, i, "EMAs", i_c_tableText, i_c_tableBg,
+                   str.tostring(unified_var, '#.#%'), i_c_tableText, bg_mm2, i_tableTextSize)
+        i += 1
+
+    if ma_a_enable
+        print_cell(display, i, mm4.label, i_c_tableText, i_c_tableBg,
+                   str.tostring(v_mm4, '#.#%'), i_c_tableText, bg_mm(v_mm4, sigma2(v_mm4)), i_tableTextSize)
+        i += 1
+
+    print_cell(display, i, "RSI", i_c_tableText, i_c_tableBg,
+               str.tostring(rsi_value, '##'), i_c_tableText, bg_rsi(rsi_value), i_tableTextSize)
+    i += 1
+
+if timeframe.isweekly and i_table_enable and barstate.islast
+    if w_ma_c_enable
+        print_cell(display, i, w_mm1.label, i_c_tableText, i_c_tableBg,
+                   str.tostring(v_w_mm1, '#.#%'), i_c_tableText, bg_mm(v_w_mm1, sigma2(v_w_mm1)), i_tableTextSize)
+        i += 1
+
+    if w_ma_i_enable
+        print_cell(display, i, w_mm2.label, i_c_tableText, i_c_tableBg,
+                   str.tostring(v_w_mm2, '#.#%'), i_c_tableText, bg_mm(v_w_mm2, sigma2(v_w_mm2)), i_tableTextSize)
+        i += 1
+
+    if w_ma_l_enable
+        print_cell(display, i, w_mm3.label, i_c_tableText, i_c_tableBg,
+                   str.tostring(v_w_mm3, '#.#%'), i_c_tableText, bg_mm(v_w_mm3, sigma2(v_w_mm3)), i_tableTextSize)
+        i += 1
+
+    if w_ma_a_enable
+        print_cell(display, i, w_mm4.label, i_c_tableText, i_c_tableBg,
+                   str.tostring(v_w_mm4, '#.#%'), i_c_tableText, bg_mm(v_w_mm4, sigma2(v_w_mm4)), i_tableTextSize)
+        i += 1
+
+    print_cell(display, i, "RSI", i_c_tableText, i_c_tableBg,
+               str.tostring(rsi_value, '##'), i_c_tableText, bg_rsi(rsi_value), i_tableTextSize)
+    i += 1
+
+if timeframe.ismonthly and i_table_enable and barstate.islast
+    if m_ma_c_enable
+        print_cell(display, i, m_mm1.label, i_c_tableText, i_c_tableBg,
+                   str.tostring(v_m_mm1, '#.#%'), i_c_tableText, bg_mm(v_m_mm1, sigma2(v_m_mm1)), i_tableTextSize)
+        i += 1
+
+    if m_ma_l_enable
+        print_cell(display, i, m_mm2.label, i_c_tableText, i_c_tableBg,
+                   str.tostring(v_m_mm2, '#.#%'), i_c_tableText, bg_mm(v_m_mm2, sigma2(v_m_mm2)), i_tableTextSize)
+        i += 1
+
+    print_cell(display, i, "RSI", i_c_tableText, i_c_tableBg,
+               str.tostring(rsi_value, '##'), i_c_tableText, bg_rsi(rsi_value), i_tableTextSize)
+    i += 1
+
+// ++++++++++++++++++++++++++ Print Additional Cells
+
+if i_table_enable and barstate.islast
+    // Cell 1 - 2 Sigma Dispersion
+    if timeframe.isdaily or timeframe.isweekly or timeframe.ismonthly
+        if sigma_bb_format == '0-100 inside band'
+            print_cell(display, i, "2σ", i_c_tableText, i_c_tableBg,
+                       str.tostring(bb_2sigma, '#'), fg_percentage_BB(bb_2sigma), bg_percentage_BB(bb_2sigma), i_tableTextSize)
+        else
+            print_cell(display, i, "2σ", i_c_tableText, i_c_tableBg,
+                       str.tostring(d, '####.#%'), fg_sigma2(d), bg_sigma2(d), i_tableTextSize)
+        i += 1
+
+    // Cell 2 - Beta
+    print_cell(display, i, "β-5Y", i_c_tableText, i_c_tableBg,
+               str.tostring(beta, '#.#'), i_c_tableText, bg_beta(beta), i_tableTextSize)
+    i += 1
+
+    // Cell 3 - Dividend Yield
+    print_cell(display, i, "Div Yield", i_c_tableText, i_c_tableBg,
+               str.tostring(_divYield / 100, '#.#%'), i_c_tableText, bg_div(nz(_divYield, 0.0)), i_tableTextSize)
+    i += 1
+
+// ++++++++++++++++++++++++++ BUY/SELL SIGNALS
+
+// Signal detection logic
+bool buy_mm1_signal = false
+bool sell_mm1_signal = false
+bool buy_rsi_signal = false
+bool sell_rsi_signal = false
+bool buy_emas_signal = false
+bool sell_emas_signal = false
+
+if enable_signals
+    // MM1 crossover signals
+    if signal_mm1 and ma_c_enable
+        buy_mm1_signal := xUpMM1 and rsi_value < 65
+        sell_mm1_signal := xDnMM1 and rsi_value > 35
+
+    // RSI oversold/overbought signals
+    if signal_rsi
+        bool rsi_exit_oversold = ta.crossover(rsi_value, rsi_oversold)
+        bool rsi_exit_overbought = ta.crossunder(rsi_value, rsi_overbought)
+        buy_rsi_signal := rsi_exit_oversold and close > mm1.value
+        sell_rsi_signal := rsi_exit_overbought and close < mm1.value
+
+    // Long EMAs crossover signals
+    if signal_emas and ma_i_enable and ma_l_enable
+        buy_emas_signal := xUpEMA and rsi_value > 40 and rsi_value < 70
+        sell_emas_signal := xDnEMA and rsi_value < 60 and rsi_value > 30
+
+// Combined signals
+bool buy_signal = buy_mm1_signal or buy_rsi_signal or buy_emas_signal
+bool sell_signal = sell_mm1_signal or sell_rsi_signal or sell_emas_signal
+
+// Plot signals on chart
+plotshape(buy_signal, title="BUY Signal", location=location.belowbar, color=color.new(color.green, 0),
+          style=shape.labelup, text="BUY", textcolor=color.white, size=size.small)
+
+plotshape(sell_signal, title="SELL Signal", location=location.abovebar, color=color.new(color.red, 0),
+          style=shape.labeldown, text="SELL", textcolor=color.white, size=size.small)
+
+// Signal alerts
+if buy_signal
+    alert(syminfo.ticker + " BUY SIGNAL - " +
+          (buy_mm1_signal ? "MM1 Crossover | " : "") +
+          (buy_rsi_signal ? "RSI Oversold Exit | " : "") +
+          (buy_emas_signal ? "Long EMAs Crossover" : ""), alert.freq_once_per_bar)
+
+if sell_signal
+    alert(syminfo.ticker + " SELL SIGNAL - " +
+          (sell_mm1_signal ? "MM1 Crossover | " : "") +
+          (sell_rsi_signal ? "RSI Overbought Exit | " : "") +
+          (sell_emas_signal ? "Long EMAs Crossover" : ""), alert.freq_once_per_bar)
+
+alertcondition(buy_signal, title="BUY Signal", message="{{ticker}} - BUY Signal Detected")
+alertcondition(sell_signal, title="SELL Signal", message="{{ticker}} - SELL Signal Detected")
