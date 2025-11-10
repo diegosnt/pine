@@ -1,0 +1,221 @@
+//@version=6
+//© diegosantacruz
+indicator(title="Blai5 Koncorde v6", shorttitle="KONCORDEv6")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Display Settings
+show_columns_daily = input.bool(true, "Show Columns on Daily+", group="Display")
+min_max_enabled = input.bool(true, "Show 3K Periods Min-Max Lines?", group="Display")
+
+// Calculation Parameters
+ema_length = input.int(255, "EMA Length", minval=1, group="Calculations")
+smoothing_period = input.int(15, "Smoothing Period (m)", minval=1, group="Calculations")
+bb_mult = input.float(2.0, "Bollinger Bands Multiplier", step=0.1, group="Calculations")
+mfi_length = input.int(14, "MFI Length", minval=1, group="Calculations")
+rsi_length = input.int(14, "RSI Length", minval=1, group="Calculations")
+stoch_length = input.int(21, "Stochastic Length", minval=1, group="Calculations")
+stoch_smooth = input.int(3, "Stochastic Smoothing", minval=1, group="Calculations")
+bb_length = input.int(25, "Bollinger Bands Length", minval=1, group="Calculations")
+
+// Volume Index Parameters
+pvi_nvi_period = input.int(90, "PVI/NVI Range Period", minval=1, group="Volume Indexes")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CUSTOM TYPES
+// ════════════════════════════════════════════════════════════════════════════════
+
+type VolumeIndex
+    float pvi
+    float nvi
+    float oscp
+    float azul
+
+type OscillatorComponents
+    float mfi
+    float boll_osc
+    float rsi
+    float stoch
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CORE CALCULATION FUNCTIONS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Calculate Positive Volume Index (PVI)
+// PVI increases when volume is higher than previous bar
+calc_pvi(float prev_pvi, float vol, float vol_prev, float price_change_pct) =>
+    vol > vol_prev ? nz(prev_pvi) + price_change_pct * vol : nz(prev_pvi)
+
+// Calculate Negative Volume Index (NVI)
+// NVI increases when volume is lower than previous bar
+calc_nvi(float prev_nvi, float vol, float vol_prev, float price_change_pct) =>
+    vol < vol_prev ? nz(prev_nvi) + price_change_pct * vol : nz(prev_nvi)
+
+// Calculate Money Flow Index (MFI)
+calc_mfi(int length) =>
+    float src = hlc3
+    float price_change = ta.change(src)
+    float positive_mf = math.sum(volume * (price_change <= 0 ? 0 : src), length)
+    float negative_mf = math.sum(volume * (price_change >= 0 ? 0 : src), length)
+    float mf_ratio = negative_mf != 0 ? positive_mf / negative_mf : 0
+    100.0 - (100.0 / (1.0 + mf_ratio))
+
+// Calculate Stochastic Oscillator
+calc_stoch(float src, int length, int smooth_period) =>
+    float ll = ta.lowest(low, length)
+    float hh = ta.highest(high, length)
+    float k = 100 * (src - ll) / (hh - ll)
+    ta.sma(k, smooth_period)
+
+// Calculate Bollinger Bands Oscillator
+calc_bollinger_osc(float src, int length, float multiplier) =>
+    float basis = ta.sma(src, length)
+    float dev = multiplier * ta.stdev(src, length)
+    float upper_band = basis + dev
+    float lower_band = basis - dev
+    float ob1 = (upper_band + lower_band) / 2.0
+    float ob2 = upper_band - lower_band
+    ((src - ob1) / ob2) * 100
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CUSTOM METHODS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Calculate oscillation percentage for volume indexes
+method calc_oscillation(VolumeIndex this, float value, int ema_smooth, int range_period) =>
+    float value_ema = ta.ema(value, ema_smooth)
+    float value_max = ta.highest(value_ema, range_period)
+    float value_min = ta.lowest(value_ema, range_period)
+    float value_range = value_max - value_min
+    value_range == 0 ? 0.0 : (value - value_ema) * 100 / value_range
+
+// Calculate final marron value from oscillator components
+method calc_marron(OscillatorComponents this) =>
+    (this.rsi + this.mfi + this.boll_osc + (this.stoch / 3)) / 2
+
+// ════════════════════════════════════════════════════════════════════════════════
+// VOLUME INDEXES CALCULATION
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Initialize volume indexes
+var float pvi = na
+var float nvi = na
+
+// Calculate price change percentage
+float price_change_pct = close != 0 ? (close - nz(close[1])) / close : 0
+
+// Update PVI and NVI
+pvi := calc_pvi(pvi[1], volume, nz(volume[1]), price_change_pct)
+nvi := calc_nvi(nvi[1], volume, nz(volume[1]), price_change_pct)
+
+// Create volume index object and calculate oscillations
+var vol_idx = VolumeIndex.new(0, 0, 0, 0)
+vol_idx.pvi := pvi
+vol_idx.nvi := nvi
+
+// Calculate OSCP (Positive Volume Oscillation)
+float pvim = ta.ema(pvi, smoothing_period)
+float pvimax = ta.highest(pvim, pvi_nvi_period)
+float pvimin = ta.lowest(pvim, pvi_nvi_period)
+float pvi_range = pvimax - pvimin
+vol_idx.oscp := pvi_range == 0 ? 0.0 : (pvi - pvim) * 100 / pvi_range
+
+// Calculate AZUL (Negative Volume Oscillation)
+float nvim = ta.ema(nvi, smoothing_period)
+float nvimax = ta.highest(nvim, pvi_nvi_period)
+float nvimin = ta.lowest(nvim, pvi_nvi_period)
+float nvi_range = nvimax - nvimin
+vol_idx.azul := nvi_range == 0 ? 0.0 : (nvi - nvim) * 100 / nvi_range
+
+// ════════════════════════════════════════════════════════════════════════════════
+// OSCILLATOR COMPONENTS CALCULATION
+// ════════════════════════════════════════════════════════════════════════════════
+
+float tprice = ohlc4
+
+// Calculate all oscillator components
+var osc = OscillatorComponents.new(0, 0, 0, 0)
+osc.mfi := calc_mfi(mfi_length)
+osc.boll_osc := calc_bollinger_osc(tprice, bb_length, bb_mult)
+osc.rsi := ta.rsi(tprice, rsi_length)
+osc.stoch := calc_stoch(tprice, stoch_length, stoch_smooth)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// FINAL INDICATOR CALCULATIONS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Calculate marron (main oscillator)
+float marron = osc.calc_marron()
+
+// Calculate verde (green) - marron + positive volume oscillation
+float verde = marron + vol_idx.oscp
+
+// Calculate media (red line) - EMA of marron
+float media = ta.ema(marron, smoothing_period)
+
+// Azul is the negative volume oscillation
+float azul = vol_idx.azul
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PLOTTING
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Determine if we should show columns (only on daily or higher timeframes)
+bool show_columns = show_columns_daily and not timeframe.isintraday
+
+// Plot columns (only on daily+ timeframes if enabled)
+plot(show_columns ? verde : 0, color=color.new(#25BC00, 0), style=plot.style_columns, linewidth=4, title="Verde")
+plot(show_columns ? marron : 0, color=color.new(#FFC34C, 0), style=plot.style_columns, linewidth=4, title="Marron")
+plot(show_columns ? azul : 0, color=color.new(#6C3AFF, 0), style=plot.style_columns, linewidth=4, title="Azul")
+
+// Plot lines (always visible)
+plot(marron, color=color.new(color.black, 0), style=plot.style_line, linewidth=2, title="Marron Line")
+plot(media, color=color.new(color.red, 0), title="Media", style=plot.style_line, linewidth=2)
+
+// Zero line
+hline(0, color=color.black, linestyle=hline.style_solid, title="Zero Line")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MIN/MAX DETECTION (PICOS NEVADOS Y MAR)
+// ════════════════════════════════════════════════════════════════════════════════
+
+if min_max_enabled and barstate.islast
+    // Initialize variables to track min and max
+    float picos_nevados = marron
+    float mar = marron
+
+    // Calculate lookback range (up to 3000 bars)
+    int lookback = math.min(bar_index - 20, 3000)
+    lookback := lookback < 1 ? 1 : lookback
+
+    // Find historical min and max values
+    for i = 0 to lookback by 1
+        picos_nevados := math.max(marron[i], picos_nevados)
+        mar := math.min(marron[i], mar)
+
+    // Draw horizontal lines for min and max
+    var line picos_nevados_line = na
+    var line mar_line = na
+
+    line.delete(picos_nevados_line)
+    line.delete(mar_line)
+
+    picos_nevados_line := line.new(
+         bar_index - lookback, picos_nevados,
+         bar_index, picos_nevados,
+         color=color.new(color.gray, 0),
+         style=line.style_dotted,
+         width=1,
+         extend=extend.right
+     )
+
+    mar_line := line.new(
+         bar_index - lookback, mar,
+         bar_index, mar,
+         color=color.new(color.gray, 0),
+         style=line.style_solid,
+         width=1,
+         extend=extend.right
+     )

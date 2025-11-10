@@ -1,0 +1,175 @@
+//@version=6
+//© diegosantacruz
+indicator(title="MACD Min/Max v6", shorttitle="MACDv6", max_bars_back=5000)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// MACD/PPO Parameters
+src = input.source(close, "Source", group="MACD Settings")
+fast_length = input.int(12, "Fast Length", minval=1, group="MACD Settings")
+slow_length = input.int(26, "Slow Length", minval=1, group="MACD Settings")
+signal_length = input.int(9, "Signal Smoothing", minval=1, maxval=50, group="MACD Settings")
+sma_source = input.bool(false, "Simple MA (Oscillator)", group="MACD Settings", tooltip="Use SMA instead of EMA for oscillator calculation")
+sma_signal = input.bool(false, "Simple MA (Signal Line)", group="MACD Settings", tooltip="Use SMA instead of EMA for signal line")
+
+// Display Options
+show_min_max_hist = input.bool(true, "Show 3K Periods Min-Max Histogram?", group="Display")
+show_min_max_ppo = input.bool(true, "Show 3K Periods Min-Max PPO?", group="Display")
+
+// Color Settings
+col_grow_above = input.color(#2AFF00, "Growing Above Zero", group="Colors", inline="hist1")
+col_fall_above = input.color(#168500, "Falling Above Zero", group="Colors", inline="hist1")
+col_grow_below = input.color(#980000, "Growing Below Zero", group="Colors", inline="hist2")
+col_fall_below = input.color(#FF0000, "Falling Below Zero", group="Colors", inline="hist2")
+col_ppo = input.color(#0042FF, "PPO Line", group="Colors", inline="lines")
+col_signal = input.color(#FFA200, "Signal Line", group="Colors", inline="lines")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CUSTOM TYPES
+// ════════════════════════════════════════════════════════════════════════════════
+
+type MACDResult
+    float ppo
+    float signal
+    float histogram
+
+type MinMaxRange
+    float min_value
+    float max_value
+    int lookback_bars
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CORE CALCULATION FUNCTIONS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Calculate moving average based on type (SMA or EMA)
+calc_ma(float source, int length, bool use_sma) =>
+    float sma_value = ta.sma(source, length)
+    float ema_value = ta.ema(source, length)
+    use_sma ? sma_value : ema_value
+
+// Calculate Percentage Price Oscillator (PPO)
+calc_ppo(float source, int fast_len, int slow_len, bool use_sma) =>
+    float fast_ma = calc_ma(source, fast_len, use_sma)
+    float slow_ma = calc_ma(source, slow_len, use_sma)
+    slow_ma != 0 ? (fast_ma - slow_ma) / slow_ma * 100 : 0.0
+
+// Find historical min and max values
+calc_min_max(float value, int max_lookback) =>
+    var float min_val = value
+    var float max_val = value
+
+    if barstate.islast
+        min_val := value
+        max_val := value
+
+        // Calculate actual lookback range (ensure we don't exceed available bars)
+        int available_bars = bar_index - 20
+        available_bars := available_bars < 0 ? 0 : available_bars
+        int lookback = math.min(available_bars, max_lookback)
+
+        // Find min and max in historical data
+        if lookback > 0
+            for i = 0 to lookback by 1
+                min_val := math.min(value[i], min_val)
+                max_val := math.max(value[i], max_val)
+
+    MinMaxRange.new(min_val, max_val, bar_index)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CUSTOM METHODS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Get histogram color based on current and previous values
+method get_hist_color(MACDResult this, MACDResult prev) =>
+    bool is_above_zero = this.histogram >= 0
+    bool is_growing = prev.histogram < this.histogram
+
+    switch
+        is_above_zero and is_growing => col_grow_above
+        is_above_zero and not is_growing => col_fall_above
+        not is_above_zero and is_growing => col_grow_below
+        => col_fall_below
+
+// Draw min/max lines for a value
+method draw_lines(MinMaxRange this, color line_color, int line_width, string line_style) =>
+    var line max_line = na
+    var line min_line = na
+
+    if barstate.islast
+        line.delete(max_line)
+        line.delete(min_line)
+
+        max_line := line.new(
+             this.lookback_bars - 20, this.max_value,
+             this.lookback_bars, this.max_value,
+             color=line_color,
+             style=line_style,
+             width=line_width,
+             extend=extend.right
+         )
+
+        min_line := line.new(
+             this.lookback_bars - 20, this.min_value,
+             this.lookback_bars, this.min_value,
+             color=line_color,
+             style=line_style,
+             width=line_width,
+             extend=extend.right
+         )
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MACD CALCULATION
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Calculate PPO (Percentage Price Oscillator)
+float ppo = calc_ppo(src, fast_length, slow_length, sma_source)
+
+// Calculate Signal Line
+float signal = calc_ma(ppo, signal_length, sma_signal)
+
+// Calculate Histogram
+float histogram = ppo - signal
+
+// Create MACD result objects for current and previous bars
+var macd_current = MACDResult.new(0, 0, 0)
+var macd_previous = MACDResult.new(0, 0, 0)
+
+macd_previous := macd_current
+macd_current := MACDResult.new(ppo, signal, histogram)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MIN/MAX DETECTION
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Calculate min/max ranges for PPO and Histogram
+MinMaxRange ppo_range = calc_min_max(ppo, 3000)
+MinMaxRange hist_range = calc_min_max(histogram, 3000)
+
+// Draw min/max lines if enabled
+if show_min_max_ppo
+    ppo_range.draw_lines(color.red, 2, line.style_dotted)
+
+if show_min_max_hist
+    hist_range.draw_lines(color.gray, 1, line.style_dotted)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PLOTTING
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Get histogram color
+color hist_color = macd_current.get_hist_color(macd_previous)
+
+// Plot histogram
+plot(histogram, title="Histogram", style=plot.style_columns, color=hist_color)
+
+// Plot PPO line
+plot(ppo, title="PPO", color=col_ppo, linewidth=2)
+
+// Plot Signal line
+plot(signal, title="Signal", color=col_signal, linewidth=2)
+
+// Zero line
+hline(0, color=color.black, linestyle=hline.style_solid, linewidth=1, title="Zero Line")

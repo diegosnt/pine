@@ -1,0 +1,285 @@
+//@version=6
+indicator("Ichimoku Cloud v6", shorttitle="Ichimoku v6", overlay=true)
+
+// ============================================================================
+// INPUT PARAMETERS
+// ============================================================================
+
+// Calculation Settings
+var g_calc = "Calculation Settings"
+tenkan_period = input.int(9, title="Tenkan-sen Period", minval=1, group=g_calc, tooltip="Conversion Line period (default: 9)")
+kijun_period = input.int(26, title="Kijun-sen Period", minval=1, group=g_calc, tooltip="Base Line period (default: 26)")
+senkou_b_period = input.int(52, title="Senkou Span B Period", minval=1, group=g_calc, tooltip="Leading Span B period (default: 52)")
+displacement = input.int(26, title="Displacement", minval=1, group=g_calc, tooltip="Displacement for Senkou Spans and Chikou Span (default: 26)")
+
+// Display Settings
+var g_display = "Display Settings"
+show_tenkan = input.bool(true, title="Show Tenkan-sen (Conversion Line)", group=g_display, inline="lines1")
+show_kijun = input.bool(true, title="Show Kijun-sen (Base Line)", group=g_display, inline="lines1")
+show_senkou_a = input.bool(true, title="Show Senkou Span A", group=g_display, inline="lines2")
+show_senkou_b = input.bool(true, title="Show Senkou Span B", group=g_display, inline="lines2")
+show_chikou = input.bool(true, title="Show Chikou Span (Lagging Line)", group=g_display, inline="lines3")
+show_cloud = input.bool(true, title="Show Cloud (Kumo)", group=g_display, inline="cloud")
+cloud_transparency = input.int(85, title="Cloud Transparency", minval=0, maxval=100, group=g_display, inline="cloud")
+show_signals = input.bool(true, title="Show Buy/Sell Signals", group=g_display, tooltip="Display signals when Tenkan crosses Kijun")
+show_table = input.bool(true, title="Show Signals Table", group=g_display)
+table_position = input.string("top_right", title="Table Position", options=["top_left", "top_center", "top_right", "middle_left", "middle_center", "middle_right", "bottom_left", "bottom_center", "bottom_right"], group=g_display)
+
+// Color Settings
+var g_colors = "Color Settings"
+color_tenkan = input.color(color.new(#0496FF, 0), title="Tenkan-sen", group=g_colors, inline="line1")
+color_kijun = input.color(color.new(#991515, 0), title="Kijun-sen", group=g_colors, inline="line1")
+color_chikou = input.color(color.new(#459915, 0), title="Chikou Span", group=g_colors, inline="line2")
+color_senkou_a = input.color(color.new(#008000, 0), title="Senkou Span A", group=g_colors, inline="line3")
+color_senkou_b = input.color(color.new(#FF0000, 0), title="Senkou Span B", group=g_colors, inline="line3")
+color_cloud_bullish = input.color(color.new(#00FF00, 0), title="Bullish Cloud", group=g_colors, inline="cloud")
+color_cloud_bearish = input.color(color.new(#FF0000, 0), title="Bearish Cloud", group=g_colors, inline="cloud")
+
+// ============================================================================
+// CUSTOM TYPES
+// ============================================================================
+
+type IchimokuComponents
+    float tenkan
+    float kijun
+    float senkou_a
+    float senkou_b
+    float chikou
+    bool cloud_bullish  // true when Senkou A > Senkou B
+
+type IchimokuSignals
+    bool tk_cross_bull     // Tenkan crossed above Kijun
+    bool tk_cross_bear     // Tenkan crossed below Kijun
+    bool price_above_cloud // Price is above the cloud
+    bool price_below_cloud // Price is below the cloud
+    bool price_in_cloud    // Price is inside the cloud
+    bool chikou_above_price // Chikou is above price from 26 bars ago
+    string trend_strength   // "Strong Bullish", "Bullish", "Neutral", "Bearish", "Strong Bearish"
+    string signal           // "BUY", "SELL", "HOLD"
+
+// ============================================================================
+// CORE FUNCTIONS
+// ============================================================================
+
+// Calculate midpoint of highest high and lowest low over a period
+calc_donchian(length) =>
+    (ta.highest(high, length) + ta.lowest(low, length)) / 2
+
+// Calculate Tenkan-sen (Conversion Line)
+calc_tenkan(period) =>
+    calc_donchian(period)
+
+// Calculate Kijun-sen (Base Line)
+calc_kijun(period) =>
+    calc_donchian(period)
+
+// Calculate Senkou Span A (Leading Span A)
+calc_senkou_a(tenkan, kijun) =>
+    (tenkan + kijun) / 2
+
+// Calculate Senkou Span B (Leading Span B)
+calc_senkou_b(period) =>
+    calc_donchian(period)
+
+// Calculate Chikou Span (Lagging Span)
+calc_chikou() =>
+    close
+
+// Calculate all Ichimoku components
+calc_ichimoku(tenkan_len, kijun_len, senkou_b_len) =>
+    tenkan = calc_tenkan(tenkan_len)
+    kijun = calc_kijun(kijun_len)
+    senkou_a = calc_senkou_a(tenkan, kijun)
+    senkou_b = calc_senkou_b(senkou_b_len)
+    chikou = calc_chikou()
+    cloud_bullish = senkou_a > senkou_b
+
+    IchimokuComponents.new(tenkan, kijun, senkou_a, senkou_b, chikou, cloud_bullish)
+
+// ============================================================================
+// CUSTOM METHODS
+// ============================================================================
+
+// Detect signals and trends
+method analyze_signals(IchimokuComponents this) =>
+    // Get current price position relative to cloud
+    current_senkou_a = this.senkou_a
+    current_senkou_b = this.senkou_b
+    cloud_top = math.max(current_senkou_a, current_senkou_b)
+    cloud_bottom = math.min(current_senkou_a, current_senkou_b)
+
+    price_above_cloud = close > cloud_top
+    price_below_cloud = close < cloud_bottom
+    price_in_cloud = not price_above_cloud and not price_below_cloud
+
+    // Tenkan/Kijun cross detection
+    tk_cross_bull = ta.crossover(this.tenkan, this.kijun)
+    tk_cross_bear = ta.crossunder(this.tenkan, this.kijun)
+
+    // Chikou Span position (compare current chikou with price from displacement bars ago)
+    chikou_above_price = close > close[displacement]
+
+    // Determine trend strength
+    trend_strength = switch
+        price_above_cloud and this.cloud_bullish and this.tenkan > this.kijun and chikou_above_price => "Strong Bullish"
+        price_above_cloud and this.tenkan > this.kijun => "Bullish"
+        price_below_cloud and not this.cloud_bullish and this.tenkan < this.kijun and not chikou_above_price => "Strong Bearish"
+        price_below_cloud and this.tenkan < this.kijun => "Bearish"
+        => "Neutral"
+
+    // Generate trading signal
+    signal = switch
+        tk_cross_bull and price_above_cloud => "STRONG BUY"
+        tk_cross_bull and not price_below_cloud => "BUY"
+        tk_cross_bear and price_below_cloud => "STRONG SELL"
+        tk_cross_bear and not price_above_cloud => "SELL"
+        => "HOLD"
+
+    IchimokuSignals.new(
+         tk_cross_bull,
+         tk_cross_bear,
+         price_above_cloud,
+         price_below_cloud,
+         price_in_cloud,
+         chikou_above_price,
+         trend_strength,
+         signal
+     )
+
+// Get cloud color
+method get_cloud_color(IchimokuComponents this, int transparency) =>
+    base_color = this.cloud_bullish ? color_cloud_bullish : color_cloud_bearish
+    color.new(base_color, transparency)
+
+// Get signal color
+method get_signal_color(IchimokuSignals this) =>
+    switch this.signal
+        "STRONG BUY" => color.new(#00FF00, 0)
+        "BUY" => color.new(#00AA00, 0)
+        "STRONG SELL" => color.new(#FF0000, 0)
+        "SELL" => color.new(#AA0000, 0)
+        => color.gray
+
+// Get trend color
+method get_trend_color(IchimokuSignals this) =>
+    switch this.trend_strength
+        "Strong Bullish" => color.new(#00FF00, 30)
+        "Bullish" => color.new(#00AA00, 50)
+        "Strong Bearish" => color.new(#FF0000, 30)
+        "Bearish" => color.new(#AA0000, 50)
+        => color.new(color.gray, 70)
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+
+// Calculate Ichimoku components
+ichimoku = calc_ichimoku(tenkan_period, kijun_period, senkou_b_period)
+
+// Analyze signals
+signals = ichimoku.analyze_signals()
+
+// ============================================================================
+// PLOTTING
+// ============================================================================
+
+// Plot Tenkan-sen (Conversion Line)
+plot(show_tenkan ? ichimoku.tenkan : na, title="Tenkan-sen", color=color_tenkan, linewidth=1)
+
+// Plot Kijun-sen (Base Line)
+plot(show_kijun ? ichimoku.kijun : na, title="Kijun-sen", color=color_kijun, linewidth=2)
+
+// Plot Senkou Span A (Leading Span A) - displaced forward
+senkou_a_plot = plot(show_senkou_a ? ichimoku.senkou_a : na, title="Senkou Span A", color=color_senkou_a, offset=displacement, linewidth=1)
+
+// Plot Senkou Span B (Leading Span B) - displaced forward
+senkou_b_plot = plot(show_senkou_b ? ichimoku.senkou_b : na, title="Senkou Span B", color=color_senkou_b, offset=displacement, linewidth=1)
+
+// Plot Cloud (Kumo)
+fill(senkou_a_plot, senkou_b_plot, color=show_cloud ? ichimoku.get_cloud_color(cloud_transparency) : na, title="Cloud")
+
+// Plot Chikou Span (Lagging Span) - displaced backward
+plot(show_chikou ? ichimoku.chikou : na, title="Chikou Span", color=color_chikou, offset=-displacement, linewidth=1)
+
+// Buy/Sell signals on Tenkan/Kijun cross
+plotshape(
+     show_signals and signals.tk_cross_bull,
+     title="TK Cross Bull",
+     style=shape.triangleup,
+     location=location.belowbar,
+     color=color.new(#00FF00, 0),
+     size=size.small,
+     text="BUY"
+ )
+
+plotshape(
+     show_signals and signals.tk_cross_bear,
+     title="TK Cross Bear",
+     style=shape.triangledown,
+     location=location.abovebar,
+     color=color.new(#FF0000, 0),
+     size=size.small,
+     text="SELL"
+ )
+
+// ============================================================================
+// SIGNALS TABLE
+// ============================================================================
+
+if show_table and barstate.islast
+    // Parse table position
+    pos = switch table_position
+        "top_left" => position.top_left
+        "top_center" => position.top_center
+        "top_right" => position.top_right
+        "middle_left" => position.middle_left
+        "middle_center" => position.middle_center
+        "middle_right" => position.middle_right
+        "bottom_left" => position.bottom_left
+        "bottom_center" => position.bottom_center
+        "bottom_right" => position.bottom_right
+        => position.top_right
+
+    // Create table
+    var tbl = table.new(pos, 2, 6, border_width=1)
+
+    // Header
+    table.cell(tbl, 0, 0, "Ichimoku Signals", text_color=color.white, bgcolor=color.gray, text_size=size.normal)
+    table.merge_cells(tbl, 0, 0, 1, 0)
+
+    // Current Signal
+    table.cell(tbl, 0, 1, "Signal", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 1, signals.signal, text_color=color.white, bgcolor=signals.get_signal_color(), text_size=size.small)
+
+    // Trend Strength
+    table.cell(tbl, 0, 2, "Trend", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 2, signals.trend_strength, text_color=color.white, bgcolor=signals.get_trend_color(), text_size=size.small)
+
+    // Price vs Cloud
+    price_cloud_text = signals.price_above_cloud ? "Above Cloud" : signals.price_below_cloud ? "Below Cloud" : "In Cloud"
+    price_cloud_color = signals.price_above_cloud ? color.new(#00AA00, 30) : signals.price_below_cloud ? color.new(#AA0000, 30) : color.new(color.gray, 50)
+    table.cell(tbl, 0, 3, "Price Position", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 3, price_cloud_text, text_color=color.white, bgcolor=price_cloud_color, text_size=size.small)
+
+    // Cloud Type
+    cloud_text = ichimoku.cloud_bullish ? "Bullish Cloud" : "Bearish Cloud"
+    cloud_color = ichimoku.cloud_bullish ? color.new(#00AA00, 30) : color.new(#AA0000, 30)
+    table.cell(tbl, 0, 4, "Cloud Type", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 4, cloud_text, text_color=color.white, bgcolor=cloud_color, text_size=size.small)
+
+    // TK Position
+    tk_text = ichimoku.tenkan > ichimoku.kijun ? "Tenkan > Kijun" : "Tenkan < Kijun"
+    tk_color = ichimoku.tenkan > ichimoku.kijun ? color.new(#00AA00, 30) : color.new(#AA0000, 30)
+    table.cell(tbl, 0, 5, "TK Position", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 5, tk_text, text_color=color.white, bgcolor=tk_color, text_size=size.small)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+alertcondition(signals.tk_cross_bull and signals.price_above_cloud, title="Strong Buy Signal", message="Ichimoku: STRONG BUY - TK Cross Bull above cloud")
+alertcondition(signals.tk_cross_bull, title="Buy Signal", message="Ichimoku: BUY - Tenkan crossed above Kijun")
+alertcondition(signals.tk_cross_bear and signals.price_below_cloud, title="Strong Sell Signal", message="Ichimoku: STRONG SELL - TK Cross Bear below cloud")
+alertcondition(signals.tk_cross_bear, title="Sell Signal", message="Ichimoku: SELL - Tenkan crossed below Kijun")
+alertcondition(ta.crossover(close, math.max(ichimoku.senkou_a, ichimoku.senkou_b)), title="Price Above Cloud", message="Ichimoku: Price crossed above cloud")
+alertcondition(ta.crossunder(close, math.min(ichimoku.senkou_a, ichimoku.senkou_b)), title="Price Below Cloud", message="Ichimoku: Price crossed below cloud")

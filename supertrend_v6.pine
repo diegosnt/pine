@@ -1,0 +1,225 @@
+//@version=6
+indicator("Supertrend v6", shorttitle="ST v6", overlay=true)
+
+// ============================================================================
+// INPUT PARAMETERS
+// ============================================================================
+
+// Calculation Settings
+var g_calc = "Calculation Settings"
+atr_period = input.int(10, title="ATR Period", minval=1, group=g_calc, tooltip="Period for Average True Range calculation. Lower = more sensitive, Higher = smoother")
+multiplier = input.float(3.0, title="ATR Multiplier", minval=0.5, step=0.1, group=g_calc, tooltip="Multiplier for ATR bands. Higher = wider bands = fewer signals")
+
+// Display Settings
+var g_display = "Display Settings"
+show_signals = input.bool(true, title="Show Buy/Sell Signals", group=g_display, tooltip="Display triangle markers on trend changes")
+show_table = input.bool(true, title="Show Statistics Table", group=g_display, tooltip="Display table with average bars in each trend")
+table_position = input.string("top_right", title="Table Position", options=["top_left", "top_center", "top_right", "middle_left", "middle_center", "middle_right", "bottom_left", "bottom_center", "bottom_right"], group=g_display)
+
+// Color Settings
+var g_colors = "Color Settings"
+color_up = input.color(color.new(#00FF00, 0), title="Uptrend Color", group=g_colors, inline="trend")
+color_down = input.color(color.new(#FF0000, 0), title="Downtrend Color", group=g_colors, inline="trend")
+color_buy_signal = input.color(color.new(#00FF00, 0), title="Buy Signal", group=g_colors, inline="signals")
+color_sell_signal = input.color(color.new(#FF0000, 0), title="Sell Signal", group=g_colors, inline="signals")
+bg_transparency = input.int(95, title="Background Transparency", minval=0, maxval=100, group=g_colors)
+
+// ============================================================================
+// CUSTOM TYPES
+// ============================================================================
+
+type SupertrendResult
+    float upperband
+    float lowerband
+    float supertrend
+    int direction  // 1 = downtrend (sell), -1 = uptrend (buy)
+    bool changed   // true when direction changes
+
+type TrendStats
+    int uptrend_bars
+    int downtrend_bars
+    int total_uptrends
+    int total_downtrends
+    float avg_uptrend_bars
+    float avg_downtrend_bars
+
+// ============================================================================
+// CORE FUNCTIONS
+// ============================================================================
+
+// Calculate ATR using RMA (Wilder's smoothing)
+calc_atr(period) =>
+    ta.atr(period)
+
+// Calculate basic bands
+calc_basic_bands(atr_value, mult) =>
+    hl2_value = (high + low) / 2
+    upper = hl2_value + (mult * atr_value)
+    lower = hl2_value - (mult * atr_value)
+    [upper, lower]
+
+// Calculate Supertrend
+calc_supertrend(atr_period, mult) =>
+    atr_value = calc_atr(atr_period)
+    [basic_upper, basic_lower] = calc_basic_bands(atr_value, mult)
+
+    // Initialize variables with var
+    var float final_upper = na
+    var float final_lower = na
+    var int trend = 1
+    var float st = na
+
+    // First bar initialization
+    if na(final_upper)
+        final_upper := basic_upper
+    if na(final_lower)
+        final_lower := basic_lower
+
+    // Adjust upper band
+    final_upper := (basic_upper < final_upper or close[1] > final_upper) ? basic_upper : final_upper
+
+    // Adjust lower band
+    final_lower := (basic_lower > final_lower or close[1] < final_lower) ? basic_lower : final_lower
+
+    // Store previous trend to detect changes
+    prev_trend = trend
+
+    // Determine trend direction
+    if close > final_upper
+        trend := -1  // Uptrend
+    else if close < final_lower
+        trend := 1   // Downtrend
+    // else trend remains unchanged
+
+    // Set Supertrend line value
+    st := trend == 1 ? final_upper : final_lower
+
+    // Detect direction change
+    changed = trend != prev_trend
+
+    SupertrendResult.new(final_upper, final_lower, st, trend, changed)
+
+// ============================================================================
+// CUSTOM METHODS
+// ============================================================================
+
+// Get current trend as string
+method get_trend_name(SupertrendResult this) =>
+    this.direction == -1 ? "Uptrend" : "Downtrend"
+
+// Get trend color
+method get_color(SupertrendResult this) =>
+    this.direction == -1 ? color_up : color_down
+
+// Get background color
+method get_bg_color(SupertrendResult this) =>
+    base_color = this.direction == -1 ? color_up : color_down
+    color.new(base_color, bg_transparency)
+
+// Update statistics
+method update_stats(TrendStats this, SupertrendResult st_result) =>
+    var int current_streak = 0
+
+    current_streak += 1
+
+    if st_result.changed and bar_index > 0
+        if st_result.direction == -1  // Changed to uptrend (was downtrend)
+            this.total_downtrends += 1
+            this.downtrend_bars += current_streak
+            this.avg_downtrend_bars := this.downtrend_bars / this.total_downtrends
+            current_streak := 1
+        else  // Changed to downtrend (was uptrend)
+            this.total_uptrends += 1
+            this.uptrend_bars += current_streak
+            this.avg_uptrend_bars := this.uptrend_bars / this.total_uptrends
+            current_streak := 1
+
+    this
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+
+// Calculate Supertrend
+st_result = calc_supertrend(atr_period, multiplier)
+
+// Initialize and update statistics
+var stats = TrendStats.new(0, 0, 0, 0, 0.0, 0.0)
+stats.update_stats(st_result)
+
+// ============================================================================
+// PLOTTING
+// ============================================================================
+
+// Plot Supertrend line
+plot_color = st_result.get_color()
+plot(st_result.supertrend, title="Supertrend", color=plot_color, linewidth=2, style=plot.style_line)
+
+// Background color
+bgcolor(st_result.get_bg_color(), title="Trend Background")
+
+// Buy/Sell signals
+plotshape(
+     show_signals and st_result.changed and st_result.direction == -1,
+     title="Buy Signal",
+     style=shape.triangleup,
+     location=location.belowbar,
+     color=color_buy_signal,
+     size=size.small
+ )
+
+plotshape(
+     show_signals and st_result.changed and st_result.direction == 1,
+     title="Sell Signal",
+     style=shape.triangledown,
+     location=location.abovebar,
+     color=color_sell_signal,
+     size=size.small
+ )
+
+// ============================================================================
+// STATISTICS TABLE
+// ============================================================================
+
+if show_table and barstate.islast
+    // Parse table position
+    pos = switch table_position
+        "top_left" => position.top_left
+        "top_center" => position.top_center
+        "top_right" => position.top_right
+        "middle_left" => position.middle_left
+        "middle_center" => position.middle_center
+        "middle_right" => position.middle_right
+        "bottom_left" => position.bottom_left
+        "bottom_center" => position.bottom_center
+        "bottom_right" => position.bottom_right
+        => position.top_right
+
+    // Create table
+    var tbl = table.new(pos, 2, 4, border_width=1)
+
+    // Header
+    table.cell(tbl, 0, 0, "Supertrend Stats", text_color=color.white, bgcolor=color.gray, text_size=size.normal)
+    table.merge_cells(tbl, 0, 0, 1, 0)
+
+    // Current trend
+    table.cell(tbl, 0, 1, "Current Trend", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 1, st_result.get_trend_name(), text_color=color.white, bgcolor=plot_color, text_size=size.small)
+
+    // Average uptrend bars
+    avg_up_text = stats.total_uptrends > 0 ? str.tostring(math.round(stats.avg_uptrend_bars)) + " bars" : "N/A"
+    table.cell(tbl, 0, 2, "Avg Uptrend", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 2, avg_up_text, text_color=color.white, bgcolor=color.new(color_up, 50), text_size=size.small)
+
+    // Average downtrend bars
+    avg_down_text = stats.total_downtrends > 0 ? str.tostring(math.round(stats.avg_downtrend_bars)) + " bars" : "N/A"
+    table.cell(tbl, 0, 3, "Avg Downtrend", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(tbl, 1, 3, avg_down_text, text_color=color.white, bgcolor=color.new(color_down, 50), text_size=size.small)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+alertcondition(st_result.changed and st_result.direction == -1, title="Supertrend Buy", message="Supertrend: BUY signal - Trend changed to uptrend")
+alertcondition(st_result.changed and st_result.direction == 1, title="Supertrend Sell", message="Supertrend: SELL signal - Trend changed to downtrend")
+alertcondition(st_result.changed, title="Supertrend Direction Change", message="Supertrend: Trend direction changed")
