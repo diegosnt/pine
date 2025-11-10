@@ -1,0 +1,363 @@
+// © Diego Santacruz
+
+//@version=6
+indicator("Squeeze Momentum Indicator", shorttitle="Squeeze", overlay=false)
+
+// ============================================================================
+// INPUTS - CONFIGURACIÓN
+// ============================================================================
+
+// Bollinger Bands
+bb_length = input.int(20, "BB Length", minval=1, group="Bollinger Bands")
+bb_mult = input.float(2.0, "BB Multiplier", minval=0.1, step=0.1, group="Bollinger Bands")
+
+// Keltner Channels
+kc_length = input.int(20, "KC Length", minval=1, group="Keltner Channels")
+kc_mult = input.float(1.5, "KC Multiplier", minval=0.1, step=0.1, group="Keltner Channels")
+kc_use_true_range = input.bool(true, "Use True Range (KC)", group="Keltner Channels")
+
+// Momentum
+mom_length = input.int(20, "Momentum Length", minval=1, group="Momentum")
+
+// Visualización
+show_labels = input.bool(true, "Mostrar Etiquetas de Squeeze", group="Visualización")
+show_table = input.bool(true, "Mostrar Tabla", group="Visualización")
+table_position = input.string("top_right", "Posición Tabla",
+     options=["top_left", "top_center", "top_right", "middle_left", "middle_center",
+              "middle_right", "bottom_left", "bottom_center", "bottom_right"],
+     group="Visualización")
+
+// Colores
+color_squeeze_on = input.color(color.new(color.red, 0), "Squeeze ON", group="Colores")
+color_squeeze_off = input.color(color.new(color.green, 0), "Squeeze OFF", group="Colores")
+color_momentum_pos = input.color(color.new(color.aqua, 0), "Momentum Positivo", group="Colores")
+color_momentum_neg = input.color(color.new(color.red, 0), "Momentum Negativo", group="Colores")
+color_momentum_pos_increasing = input.color(color.new(color.lime, 0), "Momentum Pos Creciente", group="Colores")
+color_momentum_neg_increasing = input.color(color.new(color.maroon, 0), "Momentum Neg Decreciente", group="Colores")
+
+// Alertas
+enable_alerts = input.bool(true, "Activar Alertas", group="Alertas")
+
+// ============================================================================
+// CUSTOM TYPE - RESULTADO DEL SQUEEZE
+// ============================================================================
+
+type SqueezeResult
+    bool is_squeezed        // True = Squeeze ON, False = Squeeze OFF
+    float momentum          // Valor del momentum
+    float bb_upper          // Banda superior BB
+    float bb_lower          // Banda inferior BB
+    float kc_upper          // Canal superior KC
+    float kc_lower          // Canal inferior KC
+    float bb_basis          // Línea media BB
+    float kc_basis          // Línea media KC
+    int squeeze_count       // Contador de barras en squeeze
+    int release_count       // Contador de barras desde última liberación
+
+// ============================================================================
+// FUNCIONES DE CÁLCULO
+// ============================================================================
+
+// Calcula Bollinger Bands
+calculate_bb(src, length, mult) =>
+    basis = ta.sma(src, length)
+    dev = mult * ta.stdev(src, length)
+    upper = basis + dev
+    lower = basis - dev
+    [upper, lower, basis]
+
+// Calcula Keltner Channels
+calculate_kc(src, length, mult, use_true_range) =>
+    basis = ta.ema(src, length)
+    range_value = use_true_range ? ta.tr : (high - low)
+    dev = mult * ta.ema(range_value, length)
+    upper = basis + dev
+    lower = basis - dev
+    [upper, lower, basis]
+
+// Calcula Linear Regression
+calculate_linreg(src, length) =>
+    sum_x = 0.0
+    sum_y = 0.0
+    sum_xy = 0.0
+    sum_xx = 0.0
+
+    for i = 0 to length - 1
+        x = float(i)
+        y = src[length - 1 - i]
+        sum_x += x
+        sum_y += y
+        sum_xy += x * y
+        sum_xx += x * x
+
+    n = float(length)
+    slope = (n * sum_xy - sum_x * sum_y) / (n * sum_xx - sum_x * sum_x)
+    intercept = (sum_y - slope * sum_x) / n
+
+    // Retorna el valor de la regresión en el punto actual
+    slope * (length - 1) + intercept
+
+// Calcula el Squeeze Momentum
+calculate_squeeze() =>
+    // Bollinger Bands
+    [bb_upper, bb_lower, bb_basis] = calculate_bb(close, bb_length, bb_mult)
+
+    // Keltner Channels
+    [kc_upper, kc_lower, kc_basis] = calculate_kc(close, kc_length, kc_mult, kc_use_true_range)
+
+    // Detectar squeeze (BB dentro de KC)
+    squeeze_on = bb_lower > kc_lower and bb_upper < kc_upper
+
+    // Calcular momentum usando regresión lineal
+    // El momentum es la diferencia del precio del punto medio de los canales
+    highest_high = ta.highest(high, kc_length)
+    lowest_low = ta.lowest(low, kc_length)
+    avg_value = math.avg(highest_high, lowest_low)
+    momentum_source = close - avg_value
+    momentum = calculate_linreg(momentum_source, mom_length)
+
+    // Contadores
+    var int squeeze_bars = 0
+    var int release_bars = 0
+
+    if squeeze_on
+        squeeze_bars += 1
+        release_bars := 0
+    else
+        release_bars += 1
+        if release_bars == 1
+            squeeze_bars := 0
+
+    // Crear resultado
+    result = SqueezeResult.new(
+         is_squeezed = squeeze_on,
+         momentum = momentum,
+         bb_upper = bb_upper,
+         bb_lower = bb_lower,
+         kc_upper = kc_upper,
+         kc_lower = kc_lower,
+         bb_basis = bb_basis,
+         kc_basis = kc_basis,
+         squeeze_count = squeeze_bars,
+         release_count = release_bars
+     )
+
+    result
+
+// ============================================================================
+// CÁLCULOS PRINCIPALES
+// ============================================================================
+
+squeeze_result = calculate_squeeze()
+
+// Estado del momentum (creciente o decreciente)
+momentum_increasing = na(squeeze_result[1]) ? false : squeeze_result.momentum > (squeeze_result[1]).momentum
+momentum_positive = squeeze_result.momentum >= 0
+
+// Color del histograma
+histogram_color = momentum_positive ?
+     (momentum_increasing ? color_momentum_pos_increasing : color_momentum_pos) :
+     (momentum_increasing ? color_momentum_neg_increasing : color_momentum_neg)
+
+// ============================================================================
+// TRACKING DE ESTADÍSTICAS
+// ============================================================================
+
+var int total_squeezes = 0
+var int total_squeeze_bars = 0
+var float max_squeeze_duration = 0
+var float avg_squeeze_duration = 0
+
+// Detectar nueva liberación de squeeze
+squeeze_released = na(squeeze_result[1]) ? false : (squeeze_result[1]).is_squeezed and not squeeze_result.is_squeezed
+
+if squeeze_released
+    total_squeezes += 1
+    total_squeeze_bars += (squeeze_result[1]).squeeze_count
+    max_squeeze_duration := math.max(max_squeeze_duration, (squeeze_result[1]).squeeze_count)
+    avg_squeeze_duration := total_squeezes > 0 ? total_squeeze_bars / total_squeezes : 0
+
+// ============================================================================
+// SEÑALES DE TRADING
+// ============================================================================
+
+// Señal de compra: Squeeze liberado + momentum positivo y creciente
+buy_signal = squeeze_released and momentum_positive and momentum_increasing
+
+// Señal de venta: Squeeze liberado + momentum negativo y decreciente
+sell_signal = squeeze_released and not momentum_positive and not momentum_increasing
+
+// Señal de preparación: Squeeze activándose
+squeeze_starting = na(squeeze_result[1]) ? false : not (squeeze_result[1]).is_squeezed and squeeze_result.is_squeezed
+
+// ============================================================================
+// PLOTEO
+// ============================================================================
+
+// Línea de cero
+hline(0, "Zero Line", color=color.gray, linestyle=hline.style_dotted)
+
+// Histograma de momentum
+plot(squeeze_result.momentum, "Momentum", color=histogram_color, style=plot.style_histogram, linewidth=4)
+
+// Indicador de squeeze en la línea de cero
+plot(0, "Squeeze Indicator", color=squeeze_result.is_squeezed ? color_squeeze_on : color_squeeze_off,
+     style=plot.style_circles, linewidth=3)
+
+// Etiquetas de squeeze
+if show_labels and squeeze_starting
+    label.new(bar_index, 0, "SQUEEZE ON",
+         color=color_squeeze_on,
+         textcolor=color.white,
+         style=label.style_label_down,
+         size=size.small)
+
+if show_labels and squeeze_released
+    label.new(bar_index, 0, "SQUEEZE OFF",
+         color=color_squeeze_off,
+         textcolor=color.white,
+         style=label.style_label_up,
+         size=size.small)
+
+// Señales de trading
+plotshape(buy_signal and enable_alerts, "Buy Signal", shape.triangleup,
+     location.bottom, color.new(color.green, 0), size=size.small)
+
+plotshape(sell_signal and enable_alerts, "Sell Signal", shape.triangledown,
+     location.top, color.new(color.red, 0), size=size.small)
+
+// ============================================================================
+// TABLA DE INFORMACIÓN
+// ============================================================================
+
+if show_table and barstate.islast
+    // Posición de la tabla
+    table_pos = switch table_position
+        "top_left" => position.top_left
+        "top_center" => position.top_center
+        "top_right" => position.top_right
+        "middle_left" => position.middle_left
+        "middle_center" => position.middle_center
+        "middle_right" => position.middle_right
+        "bottom_left" => position.bottom_left
+        "bottom_center" => position.bottom_center
+        "bottom_right" => position.bottom_right
+        => position.top_right
+
+    // Crear tabla
+    var table info_table = table.new(table_pos, 2, 7,
+         border_width=1,
+         border_color=color.gray,
+         frame_width=1,
+         frame_color=color.gray)
+
+    // Header
+    table.cell(info_table, 0, 0, "Squeeze Momentum",
+         text_color=color.white,
+         bgcolor=color.new(color.blue, 30),
+         text_size=size.normal)
+    table.merge_cells(info_table, 0, 0, 1, 0)
+
+    // Estado actual
+    squeeze_status = squeeze_result.is_squeezed ? "ON 🔴" : "OFF 🟢"
+    squeeze_color = squeeze_result.is_squeezed ? color.new(color.red, 70) : color.new(color.green, 70)
+
+    table.cell(info_table, 0, 1, "Estado",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(info_table, 1, 1, squeeze_status,
+         text_color=color.white,
+         bgcolor=squeeze_color)
+
+    // Momentum
+    momentum_value = str.tostring(squeeze_result.momentum, "#.####")
+    momentum_direction = momentum_positive ? "↑ Alcista" : "↓ Bajista"
+    momentum_cell_color = momentum_positive ? color.new(color.green, 70) : color.new(color.red, 70)
+
+    table.cell(info_table, 0, 2, "Momentum",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(info_table, 1, 2, momentum_value + " " + momentum_direction,
+         text_color=color.white,
+         bgcolor=momentum_cell_color)
+
+    // Duración del squeeze actual
+    current_duration = squeeze_result.is_squeezed ?
+         str.tostring(squeeze_result.squeeze_count) + " barras" :
+         str.tostring(squeeze_result.release_count) + " barras liberado"
+
+    table.cell(info_table, 0, 3, "Duración",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(info_table, 1, 3, current_duration,
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80))
+
+    // Estadísticas
+    table.cell(info_table, 0, 4, "Total Squeezes",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(info_table, 1, 4, str.tostring(total_squeezes),
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80))
+
+    table.cell(info_table, 0, 5, "Duración Promedio",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(info_table, 1, 5, str.tostring(avg_squeeze_duration, "#.#") + " barras",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80))
+
+    table.cell(info_table, 0, 6, "Duración Máxima",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(info_table, 1, 6, str.tostring(max_squeeze_duration, "#") + " barras",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80))
+
+// ============================================================================
+// ALERTAS
+// ============================================================================
+
+alertcondition(buy_signal, "Squeeze Buy Signal", "Squeeze liberado - Señal de COMPRA (Momentum alcista)")
+alertcondition(sell_signal, "Squeeze Sell Signal", "Squeeze liberado - Señal de VENTA (Momentum bajista)")
+alertcondition(squeeze_starting, "Squeeze Starting", "Squeeze activado - Consolidación detectada")
+alertcondition(squeeze_released, "Squeeze Released", "Squeeze liberado - Posible movimiento explosivo")
+
+// ============================================================================
+// NOTAS DE USO
+// ============================================================================
+
+// INTERPRETACIÓN:
+//
+// 1. SQUEEZE ON (Círculos Rojos):
+//    - Bollinger Bands están dentro de Keltner Channels
+//    - Volatilidad baja, precio consolidándose
+//    - Prepararse para ruptura explosiva
+//
+// 2. SQUEEZE OFF (Círculos Verdes):
+//    - Bollinger Bands se expanden fuera de Keltner Channels
+//    - Volatilidad aumentando, ruptura confirmada
+//    - Momento de actuar según dirección del momentum
+//
+// 3. HISTOGRAMA DE MOMENTUM:
+//    - Verde Lima: Momentum positivo y creciente (más alcista)
+//    - Aqua: Momentum positivo pero decreciente (perdiendo fuerza alcista)
+//    - Rojo Oscuro: Momentum negativo y decreciente (más bajista)
+//    - Rojo: Momentum negativo pero creciente (perdiendo fuerza bajista)
+//
+// 4. SEÑALES DE TRADING:
+//    - Triángulo Verde (▲): Squeeze OFF + Momentum alcista fuerte
+//    - Triángulo Rojo (▼): Squeeze OFF + Momentum bajista fuerte
+//
+// 5. ESTRATEGIAS:
+//    - Squeeze ON prolongado (>20 barras) = Mayor potencial de movimiento
+//    - Squeeze OFF + momentum en tu dirección = Señal fuerte
+//    - Combinar con tendencia (Supertrend/MAs) para confirmar dirección
+//    - Usar con ADX: Squeeze OFF + ADX > 25 = Ruptura con fuerza
+//
+// 6. COMBINACIONES CON OTROS INDICADORES:
+//    - Squeeze OFF + MACD crossover = Confirmación doble
+//    - Squeeze ON + ADX bajo = Esperar, no operar
+//    - Squeeze OFF + RSI extremo = Posible reversión rápida
+//    - Momentum positivo + Precio > EMA200 = Sesgo alcista
