@@ -1,0 +1,249 @@
+//@version=6
+//© Diego Santacruz
+indicator("Premarket Heat Map v6", shorttitle="PM_HeatMap", overlay=true)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Umbrales de niveles
+level_1 = input.float(2.0, "Nivel 1 - Movimiento Moderado (%)", minval=0.1, step=0.5, group="Niveles")
+level_2 = input.float(5.0, "Nivel 2 - Movimiento Fuerte (%)", minval=0.1, step=0.5, group="Niveles")
+level_3 = input.float(10.0, "Nivel 3 - Movimiento Extremo (%)", minval=0.1, step=0.5, group="Niveles")
+
+// Visualización
+show_heatmap_bg = input.bool(true, "Mostrar Heat Map (Fondo)", group="Visualización")
+show_price_line = input.bool(true, "Mostrar Línea de Precio Premarket", group="Visualización")
+show_level_lines = input.bool(true, "Mostrar Líneas de Niveles", group="Visualización")
+show_table = input.bool(true, "Mostrar Tabla de Estado", group="Visualización")
+show_labels = input.bool(true, "Mostrar Etiquetas", group="Visualización")
+
+// Alertas
+enable_alerts = input.bool(true, "Activar Alertas", group="Alertas")
+alert_level = input.float(5.0, "Alertar cuando supere (%)", minval=0, step=0.5, group="Alertas")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CUSTOM TYPES
+// ════════════════════════════════════════════════════════════════════════════════
+
+type PremarketData
+    float prev_close          // Cierre del día anterior
+    float current_price       // Precio actual
+    float change_pct          // Cambio porcentual
+    float change_abs          // Cambio absoluto
+    bool is_premarket         // Estamos en premarket?
+    int level                 // Nivel alcanzado (0-3)
+    string classification     // Clasificación textual
+    color heat_color          // Color según intensidad
+
+// ════════════════════════════════════════════════════════════════════════════════
+// FUNCIONES CORE
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Calcular datos de premarket
+calc_premarket_data() =>
+    // Obtener cierre del día anterior (sesión regular)
+    prev_close = request.security(syminfo.tickerid, "D", close[1], barmerge.gaps_off, barmerge.lookahead_on)
+
+    // Precio actual
+    current = close
+
+    // Cambio
+    change_pct = prev_close != 0 ? ((current - prev_close) / prev_close) * 100 : 0
+    change_abs = current - prev_close
+
+    // Detectar sesión
+    is_pm = session.ispremarket
+
+    // Determinar nivel alcanzado
+    abs_change = math.abs(change_pct)
+    level = abs_change >= level_3 ? 3 :
+            abs_change >= level_2 ? 2 :
+            abs_change >= level_1 ? 1 : 0
+
+    // Clasificación
+    classification = switch level
+        3 => change_pct > 0 ? "🔥 EXPLOSIVO ALCISTA" : "❄️ CAÍDA EXTREMA"
+        2 => change_pct > 0 ? "🚀 FUERTE ALCISTA" : "⚠️ FUERTE BAJISTA"
+        1 => change_pct > 0 ? "📈 MODERADO ALCISTA" : "📉 MODERADO BAJISTA"
+        => change_pct > 0 ? "➡️ Leve Alcista" : "⬅️ Leve Bajista"
+
+    // Color heat map (escala gradual)
+    heat_color = get_heat_color(change_pct, level)
+
+    PremarketData.new(prev_close, current, change_pct, change_abs, is_pm, level, classification, heat_color)
+
+// Obtener color según intensidad de cambio
+get_heat_color(float change_pct, int level) =>
+    is_positive = change_pct > 0
+
+    color heat = switch
+        level == 3 and is_positive => color.new(#00FF00, 0)   // Verde brillante
+        level == 3 and not is_positive => color.new(#FF0000, 0)  // Rojo brillante
+        level == 2 and is_positive => color.new(#00CC00, 20)  // Verde medio
+        level == 2 and not is_positive => color.new(#CC0000, 20) // Rojo medio
+        level == 1 and is_positive => color.new(#88CC00, 40)  // Verde amarillento
+        level == 1 and not is_positive => color.new(#CC8800, 40) // Naranja
+        change_pct > 0 => color.new(#CCCC00, 60)  // Amarillo claro
+        change_pct < 0 => color.new(#FFAA00, 60)  // Naranja claro
+        => color.new(color.gray, 80)  // Gris (sin cambio)
+
+    heat
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CUSTOM METHODS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Obtener color de fondo con transparencia
+method get_bg_color(PremarketData this) =>
+    color.new(this.heat_color, 85)
+
+// Obtener texto de cambio formateado
+method get_change_text(PremarketData this) =>
+    (this.change_pct > 0 ? "+" : "") + str.tostring(this.change_pct, "#.##") + "%"
+
+// Obtener emoji según nivel
+method get_level_emoji(PremarketData this) =>
+    switch this.level
+        3 => "🔥🔥🔥"
+        2 => "🔥🔥"
+        1 => "🔥"
+        => "•"
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CÁLCULOS
+// ════════════════════════════════════════════════════════════════════════════════
+
+pm_data = calc_premarket_data()
+
+// Calcular niveles de precio
+price_level_1_up = pm_data.prev_close * (1 + level_1 / 100)
+price_level_1_dn = pm_data.prev_close * (1 - level_1 / 100)
+price_level_2_up = pm_data.prev_close * (1 + level_2 / 100)
+price_level_2_dn = pm_data.prev_close * (1 - level_2 / 100)
+price_level_3_up = pm_data.prev_close * (1 + level_3 / 100)
+price_level_3_dn = pm_data.prev_close * (1 - level_3 / 100)
+
+// Condición de alerta
+alert_triggered = pm_data.is_premarket and math.abs(pm_data.change_pct) >= alert_level
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PLOTEO
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Heat Map - Fondo
+bgcolor(show_heatmap_bg and pm_data.is_premarket ? pm_data.get_bg_color() : na, title="Heat Map Background")
+
+// Línea de precio de cierre anterior
+plot(pm_data.is_premarket ? pm_data.prev_close : na, "Cierre Previo", color=color.new(color.white, 0), linewidth=2, style=plot.style_line)
+
+// Líneas de niveles alcistas
+plot(show_level_lines and pm_data.is_premarket ? price_level_1_up : na, "Nivel +1", color=color.new(#00AA00, 50), linewidth=1, style=plot.style_dashed)
+plot(show_level_lines and pm_data.is_premarket ? price_level_2_up : na, "Nivel +2", color=color.new(#00FF00, 30), linewidth=2, style=plot.style_dashed)
+plot(show_level_lines and pm_data.is_premarket ? price_level_3_up : na, "Nivel +3", color=color.new(#00FF00, 0), linewidth=3, style=plot.style_dashed)
+
+// Líneas de niveles bajistas
+plot(show_level_lines and pm_data.is_premarket ? price_level_1_dn : na, "Nivel -1", color=color.new(#AA0000, 50), linewidth=1, style=plot.style_dashed)
+plot(show_level_lines and pm_data.is_premarket ? price_level_2_dn : na, "Nivel -2", color=color.new(#FF0000, 30), linewidth=2, style=plot.style_dashed)
+plot(show_level_lines and pm_data.is_premarket ? price_level_3_dn : na, "Nivel -3", color=color.new(#FF0000, 0), linewidth=3, style=plot.style_dashed)
+
+// Etiqueta de nivel actual
+if show_labels and pm_data.is_premarket and pm_data.level >= 1 and barstate.islast
+    label.new(
+        bar_index, high,
+        pm_data.get_level_emoji() + " " + pm_data.classification + "\n" + pm_data.get_change_text(),
+        color=pm_data.heat_color,
+        textcolor=color.white,
+        style=label.style_label_down,
+        size=size.large
+    )
+
+// ════════════════════════════════════════════════════════════════════════════════
+// TABLA DE ESTADO
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_table and barstate.islast
+    var table heat_table = table.new(position.top_right, 2, 8, border_width=2, border_color=color.gray)
+
+    // Header
+    table.cell(heat_table, 0, 0, "PREMARKET HEAT MAP", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.normal)
+    table.merge_cells(heat_table, 0, 0, 1, 0)
+
+    // Estado de sesión
+    session_text = pm_data.is_premarket ? "🟢 PREMARKET ACTIVO" : "⚪ Sesión Regular"
+    session_color = pm_data.is_premarket ? color.new(color.green, 30) : color.new(color.gray, 70)
+    table.cell(heat_table, 0, 1, "Estado", text_color=color.white, bgcolor=color.new(color.gray, 50))
+    table.cell(heat_table, 1, 1, session_text, text_color=color.white, bgcolor=session_color)
+
+    // Cierre anterior
+    table.cell(heat_table, 0, 2, "Cierre Previo", text_color=color.white, bgcolor=color.new(color.gray, 50))
+    table.cell(heat_table, 1, 2, "$" + str.tostring(pm_data.prev_close, "#.##"), text_color=color.white, bgcolor=color.new(color.gray, 80))
+
+    // Precio actual
+    table.cell(heat_table, 0, 3, "Precio Actual", text_color=color.white, bgcolor=color.new(color.gray, 50))
+    table.cell(heat_table, 1, 3, "$" + str.tostring(pm_data.current_price, "#.##"), text_color=color.white, bgcolor=color.new(color.gray, 80))
+
+    // Cambio %
+    table.cell(heat_table, 0, 4, "Cambio %", text_color=color.white, bgcolor=color.new(color.gray, 50))
+    table.cell(heat_table, 1, 4, pm_data.get_change_text(), text_color=color.white, bgcolor=color.new(pm_data.heat_color, 40))
+
+    // Cambio absoluto
+    table.cell(heat_table, 0, 5, "Cambio $", text_color=color.white, bgcolor=color.new(color.gray, 50))
+    table.cell(heat_table, 1, 5, "$" + str.tostring(pm_data.change_abs, "#.##"), text_color=color.white, bgcolor=color.new(color.gray, 80))
+
+    // Nivel alcanzado
+    table.cell(heat_table, 0, 6, "Nivel", text_color=color.white, bgcolor=color.new(color.gray, 50))
+    table.cell(heat_table, 1, 6, pm_data.get_level_emoji() + " " + str.tostring(pm_data.level) + "/3", text_color=color.white, bgcolor=color.new(pm_data.heat_color, 40))
+
+    // Clasificación
+    table.cell(heat_table, 0, 7, "Clasificación", text_color=color.white, bgcolor=color.new(color.gray, 50))
+    table.cell(heat_table, 1, 7, pm_data.classification, text_color=color.white, bgcolor=color.new(pm_data.heat_color, 30), text_size=size.small)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ALERTAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+alertcondition(enable_alerts and alert_triggered and pm_data.change_pct > 0,
+    "Premarket Alert UP", "🚀 Premarket subió " + str.tostring(pm_data.change_pct) + "%")
+
+alertcondition(enable_alerts and alert_triggered and pm_data.change_pct < 0,
+    "Premarket Alert DOWN", "⚠️ Premarket bajó " + str.tostring(pm_data.change_pct) + "%")
+
+alertcondition(enable_alerts and pm_data.level == 3,
+    "Premarket EXTREME", "🔥 Movimiento EXTREMO en premarket: " + str.tostring(pm_data.change_pct) + "%")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// NOTAS DE USO
+// ════════════════════════════════════════════════════════════════════════════════
+
+// INTERPRETACIÓN:
+//
+// 1. HEAT MAP (Fondo de colores):
+//    - Verde brillante: Movimiento alcista extremo (>10%)
+//    - Verde medio: Movimiento alcista fuerte (5-10%)
+//    - Verde amarillento: Movimiento alcista moderado (2-5%)
+//    - Amarillo: Movimiento alcista leve (<2%)
+//    - Naranja: Movimiento bajista leve o moderado
+//    - Rojo: Movimiento bajista fuerte o extremo
+//
+// 2. LÍNEAS DE NIVELES:
+//    - Blanca: Cierre del día anterior (referencia)
+//    - Verdes punteadas: Niveles alcistas (+2%, +5%, +10%)
+//    - Rojas punteadas: Niveles bajistas (-2%, -5%, -10%)
+//
+// 3. CLASIFICACIÓN:
+//    - 🔥🔥🔥 EXPLOSIVO: >10% de movimiento
+//    - 🔥🔥 FUERTE: 5-10% de movimiento
+//    - 🔥 MODERADO: 2-5% de movimiento
+//    - • Leve: <2% de movimiento
+//
+// 4. REQUISITOS:
+//    - Datos de sesión extendida (cuenta TradingView paga)
+//    - Usar en timeframes intraday (1m, 5m, 15m, 30m, 1h)
+//    - Funciona solo con acciones/ETFs con trading premarket
+//
+// 5. ESTRATEGIAS:
+//    - Nivel 3 (>10%): Atención extrema, volatilidad alta esperada en apertura
+//    - Nivel 2 (>5%): Movimiento significativo, posible gap en apertura
+//    - Nivel 1 (>2%): Movimiento moderado, monitorear
+//    - Combinar con volumen para confirmar fortaleza

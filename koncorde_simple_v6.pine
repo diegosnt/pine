@@ -1,0 +1,310 @@
+//@version=6
+//© Diego Santacruz
+indicator(title="Koncorde Simple v6", shorttitle="KoncordeSp", overlay=false)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CONFIGURACIÓN
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Parámetros básicos
+show_signals = input.bool(true, "Mostrar Señales de Trading", group="Visualización")
+show_table = input.bool(true, "Mostrar Tabla Explicativa", group="Visualización")
+show_zones = input.bool(true, "Mostrar Zonas Extremas", group="Visualización")
+
+// Alertas
+enable_alerts = input.bool(true, "Activar Alertas", group="Alertas")
+
+// Colores
+color_verde = input.color(#00E676, "Verde (Volumen Alcista)", group="Colores")
+color_marron = input.color(#FF9800, "Marrón (Oscilador Principal)", group="Colores")
+color_media = input.color(#F44336, "Media (Señal)", group="Colores")
+color_azul = input.color(#2196F3, "Azul (Volumen Bajista)", group="Colores")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CÁLCULOS PRINCIPALES
+// ════════════════════════════════════════════════════════════════════════════════
+
+// 1. OSCILADOR PRINCIPAL (Marrón)
+// Combina momentum y volumen de forma simple
+// Usa MFI (Money Flow Index) que ya incluye precio + volumen
+mfi = ta.mfi(hlc3, 14)                  // Money Flow Index
+rsi = ta.rsi(close, 14)                 // RSI
+stoch = ta.stoch(close, high, low, 14)  // Stochastic
+
+// Marron = Promedio de los osciladores (normalizado 0-100)
+marron = (mfi + rsi + stoch) / 3
+
+// 2. MEDIA (Línea Roja)
+// EMA del oscilador principal - actúa como señal de cruce
+media = ta.ema(marron, 15)
+
+// 3. VERDE (Volumen Alcista)
+// Detecta cuando hay compras fuertes
+// Calculamos si el volumen está creciendo con precio alcista
+volume_ma = ta.sma(volume, 20)
+volume_ratio = volume / volume_ma  // Ratio de volumen vs promedio
+
+// Verde = Marron + bonus por volumen alcista
+volume_boost = close > close[1] and volume > volume_ma ? (volume_ratio - 1) * 20 : 0
+verde = marron + volume_boost
+
+// 4. AZUL (Volumen Bajista)
+// Detecta cuando hay ventas fuertes
+// Similar a verde pero para movimientos bajistas
+volume_penalty = close < close[1] and volume > volume_ma ? (volume_ratio - 1) * 20 : 0
+azul = volume_penalty * -1  // Negativo para mostrarlo abajo de cero
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SEÑALES DE TRADING
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Cruces básicos (como MACD)
+bullish_cross = ta.crossover(marron, media)   // Marron cruza por encima de Media
+bearish_cross = ta.crossunder(marron, media)  // Marron cruza por debajo de Media
+
+// Zonas extremas (oversold/overbought)
+oversold = marron < 20    // Zona de sobreventa
+overbought = marron > 80  // Zona de sobrecompra
+
+// Señales fuertes (combinan cruce + zona + volumen)
+strong_buy = bullish_cross and marron < 50 and verde > marron  // Cruce alcista con volumen
+strong_sell = bearish_cross and marron > 50 and verde < marron // Cruce bajista sin volumen
+
+// Divergencia de volumen (Verde muy por encima/debajo de Marron)
+bullish_volume = verde > marron + 10  // Volumen alcista fuerte
+bearish_volume = verde < marron - 10  // Volumen bajista (ausente)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ZONAS DE REFERENCIA
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Niveles de sobrecompra/sobreventa
+hline(80, "Sobrecompra", color=color.new(color.red, 50), linestyle=hline.style_dashed)
+hline(50, "Línea Media", color=color.new(color.gray, 70), linestyle=hline.style_dotted)
+hline(20, "Sobreventa", color=color.new(color.green, 50), linestyle=hline.style_dashed)
+hline(0, "Cero", color=color.gray, linestyle=hline.style_solid)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PLOTEO DE LÍNEAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Plotear las 4 líneas principales
+plot(verde, "Verde (Vol Alcista)", color=color_verde, linewidth=2)
+plot(marron, "Marrón (Oscilador)", color=color_marron, linewidth=2)
+plot(media, "Media (Señal)", color=color_media, linewidth=2)
+plot(azul, "Azul (Vol Bajista)", color=color_azul, linewidth=1, style=plot.style_area)
+
+// Relleno entre Marron y Media para visualizar mejor la tendencia
+fill_color = marron > media ? color.new(color.green, 90) : color.new(color.red, 90)
+fill(plot(marron), plot(media), color=fill_color, title="Relleno Tendencia")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SEÑALES VISUALES
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Cruces básicos
+plotshape(show_signals and bullish_cross, "Cruce Alcista",
+     shape.triangleup, location.bottom, color.new(color.green, 0),
+     size=size.small, text="▲")
+
+plotshape(show_signals and bearish_cross, "Cruce Bajista",
+     shape.triangledown, location.top, color.new(color.red, 0),
+     size=size.small, text="▼")
+
+// Señales fuertes (con círculos)
+plotshape(show_signals and strong_buy, "COMPRA FUERTE",
+     shape.circle, location.bottom, color.new(color.lime, 0),
+     size=size.tiny)
+
+plotshape(show_signals and strong_sell, "VENTA FUERTE",
+     shape.circle, location.top, color.new(color.maroon, 0),
+     size=size.tiny)
+
+// Alertas de volumen (labels)
+if show_signals and bullish_volume and marron < 50
+    label.new(bar_index, verde, "VOL+",
+         color=color.new(color.green, 30),
+         textcolor=color.white,
+         style=label.style_label_down,
+         size=size.tiny)
+
+if show_signals and marron > 50 and verde < marron - 15
+    label.new(bar_index, marron, "SIN VOL",
+         color=color.new(color.red, 30),
+         textcolor=color.white,
+         style=label.style_label_up,
+         size=size.tiny)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// FONDO DE ZONAS EXTREMAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+bgcolor(show_zones and oversold ? color.new(color.green, 90) : na, title="Zona Sobreventa")
+bgcolor(show_zones and overbought ? color.new(color.red, 90) : na, title="Zona Sobrecompra")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// TABLA EXPLICATIVA
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_table and barstate.islast
+    var table guide_table = table.new(position.top_right, 2, 7,
+         border_width=1,
+         border_color=color.gray,
+         frame_width=1,
+         frame_color=color.gray)
+
+    // Header
+    table.cell(guide_table, 0, 0, "Koncorde Simple",
+         text_color=color.white,
+         bgcolor=color.new(color.blue, 20),
+         text_size=size.normal)
+    table.merge_cells(guide_table, 0, 0, 1, 0)
+
+    // Estado actual
+    current_state = marron > media ? "ALCISTA ↑" : "BAJISTA ↓"
+    state_color = marron > media ? color.new(color.green, 70) : color.new(color.red, 70)
+
+    table.cell(guide_table, 0, 1, "Estado",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.small)
+    table.cell(guide_table, 1, 1, current_state,
+         text_color=color.white,
+         bgcolor=state_color,
+         text_size=size.small)
+
+    // Zona actual
+    zone_text = oversold ? "SOBREVENTA" : (overbought ? "SOBRECOMPRA" : "NEUTRAL")
+    zone_color = oversold ? color.new(color.green, 70) : (overbought ? color.new(color.red, 70) : color.new(color.gray, 70))
+
+    table.cell(guide_table, 0, 2, "Zona",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.small)
+    table.cell(guide_table, 1, 2, zone_text,
+         text_color=color.white,
+         bgcolor=zone_color,
+         text_size=size.small)
+
+    // Volumen
+    vol_text = verde > marron + 5 ? "ALCISTA +" : (verde < marron - 5 ? "BAJISTA -" : "NEUTRAL")
+    vol_color = verde > marron + 5 ? color.new(color.green, 70) : (verde < marron - 5 ? color.new(color.red, 70) : color.new(color.gray, 70))
+
+    table.cell(guide_table, 0, 3, "Volumen",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.small)
+    table.cell(guide_table, 1, 3, vol_text,
+         text_color=color.white,
+         bgcolor=vol_color,
+         text_size=size.small)
+
+    // Valores
+    table.cell(guide_table, 0, 4, "Marrón",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.tiny)
+    table.cell(guide_table, 1, 4, str.tostring(marron, "#.#"),
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80),
+         text_size=size.tiny)
+
+    table.cell(guide_table, 0, 5, "Verde",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.tiny)
+    table.cell(guide_table, 1, 5, str.tostring(verde, "#.#"),
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80),
+         text_size=size.tiny)
+
+    table.cell(guide_table, 0, 6, "Diferencia",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.tiny)
+    table.cell(guide_table, 1, 6, str.tostring(verde - marron, "#.#"),
+         text_color=color.white,
+         bgcolor=vol_color,
+         text_size=size.tiny)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ALERTAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+alertcondition(enable_alerts and bullish_cross,
+     "Koncorde Cruce Alcista",
+     "🟢 Marrón cruzó por encima de Media")
+
+alertcondition(enable_alerts and bearish_cross,
+     "Koncorde Cruce Bajista",
+     "🔴 Marrón cruzó por debajo de Media")
+
+alertcondition(enable_alerts and strong_buy,
+     "Koncorde COMPRA FUERTE",
+     "💚 Señal de COMPRA con volumen alcista")
+
+alertcondition(enable_alerts and strong_sell,
+     "Koncorde VENTA FUERTE",
+     "❤️ Señal de VENTA sin volumen comprador")
+
+alertcondition(enable_alerts and oversold and bullish_cross,
+     "Koncorde Sobreventa + Cruce",
+     "📈 Cruce alcista en zona de SOBREVENTA")
+
+alertcondition(enable_alerts and overbought and bearish_cross,
+     "Koncorde Sobrecompra + Cruce",
+     "📉 Cruce bajista en zona de SOBRECOMPRA")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// GUÍA DE USO SIMPLE
+// ════════════════════════════════════════════════════════════════════════════════
+
+// CÓMO USAR KONCORDE SIMPLE:
+//
+// 1. LAS 4 LÍNEAS:
+//    🟢 VERDE: Representa el volumen ALCISTA (compras)
+//       - Cuando está MUY por encima de Marrón = Compras fuertes
+//       - Cuando está por debajo de Marrón = Sin volumen comprador
+//
+//    🟠 MARRÓN: Oscilador principal (promedio de MFI, RSI, Stochastic)
+//       - Por encima de Media (50) = Tendencia alcista
+//       - Por debajo de Media (50) = Tendencia bajista
+//
+//    🔴 MEDIA: Señal de referencia (EMA del Marrón)
+//       - Actúa como la línea Signal en el MACD
+//       - Los cruces generan señales de trading
+//
+//    🔵 AZUL: Volumen BAJISTA (ventas)
+//       - Aparece como área negativa (debajo de cero)
+//       - Mientras más grande, más ventas hay
+//
+// 2. SEÑALES DE TRADING:
+//    ▲ Triángulo Verde = Marrón cruza por encima de Media (COMPRA)
+//    ▼ Triángulo Rojo = Marrón cruza por debajo de Media (VENTA)
+//    ● Círculo = Señal FUERTE con confirmación de volumen
+//
+// 3. ZONAS:
+//    Zona Verde (0-20) = SOBREVENTA → Buscar compras
+//    Zona Neutral (20-80) = Rango normal
+//    Zona Roja (80-100) = SOBRECOMPRA → Buscar ventas
+//
+// 4. INTERPRETACIÓN DEL VOLUMEN:
+//    Label "VOL+" = Hay volumen alcista fuerte (bueno para compras)
+//    Label "SIN VOL" = No hay volumen comprador (peligro si alcista)
+//
+// 5. MEJORES SEÑALES:
+//    ✅ Cruce alcista en sobreventa + Verde > Marrón = COMPRA IDEAL
+//    ✅ Cruce bajista en sobrecompra + Verde < Marrón = VENTA IDEAL
+//    ✅ Verde muy por encima de Marrón = Compras institucionales
+//    ⚠️ Marrón subiendo pero Verde bajando = Divergencia, cuidado
+//
+// 6. EJEMPLO DE TRADING:
+//    COMPRA: ▲ + Zona verde/neutral + "VOL+" + Verde > Marrón
+//    VENTA: ▼ + Zona roja/neutral + "SIN VOL" + Verde < Marrón
+//
+// 7. DIFERENCIAS CON KONCORDE COMPLETO:
+//    - Cálculos simplificados (MFI+RSI+Stoch vs PVI/NVI complejo)
+//    - Sin columnas (solo líneas para claridad)
+//    - Menos parámetros configurables
+//    - Señales automáticas claras
+//    - Más fácil de entender para principiantes

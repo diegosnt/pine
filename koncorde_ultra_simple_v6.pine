@@ -1,0 +1,357 @@
+//@version=6
+//© Diego Santacruz
+indicator(title="Koncorde Ultra Simple v6", shorttitle="KoncordeUl", overlay=false)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CONFIGURACIÓN
+// ════════════════════════════════════════════════════════════════════════════════
+
+show_signals = input.bool(true, "Mostrar Señales", group="Visualización")
+show_table = input.bool(true, "Mostrar Guía", group="Visualización")
+
+// Colores
+color_strong_buy = input.color(#00E676, "Compra Fuerte", group="Colores")
+color_weak_buy = input.color(#81C784, "Compra Débil", group="Colores")
+color_weak_sell = input.color(#EF5350, "Venta Débil", group="Colores")
+color_strong_sell = input.color(#C62828, "Venta Fuerte", group="Colores")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CÁLCULO ULTRA SIMPLE
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Usamos MFI (Money Flow Index) que combina precio + volumen
+// Es el indicador perfecto para medir presión compradora/vendedora
+mfi = ta.mfi(hlc3, 14)
+
+// Normalizamos a escala -50 a +50 (centrado en cero)
+// En lugar de 0-100, usamos -50 a +50 para ver claridad
+momentum = mfi - 50
+
+// Señal suavizada (como Signal en MACD)
+signal = ta.ema(momentum, 9)
+
+// Histograma = diferencia entre momentum y señal
+histogram = momentum - signal
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ANÁLISIS DE VOLUMEN
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Detectar volumen anormal
+volume_ma = ta.sma(volume, 20)
+high_volume = volume > volume_ma * 1.5  // Volumen 50% superior al promedio
+
+// Detectar dirección del precio
+price_up = close > close[1]
+price_down = close < close[1]
+
+// Clasificación de fuerza
+volume_bullish = high_volume and price_up   // Volumen alcista fuerte
+volume_bearish = high_volume and price_down // Volumen bajista fuerte
+
+// ════════════════════════════════════════════════════════════════════════════════
+// COLORES INTELIGENTES DEL HISTOGRAMA
+// ════════════════════════════════════════════════════════════════════════════════
+
+// 4 colores según momentum y volumen:
+// Verde Fuerte: Momentum positivo + Volumen alcista
+// Verde Débil: Momentum positivo + Sin volumen especial
+// Rojo Débil: Momentum negativo + Sin volumen especial
+// Rojo Fuerte: Momentum negativo + Volumen bajista
+
+color hist_color =
+     histogram > 0 and volume_bullish ? color_strong_buy :
+     histogram > 0 ? color_weak_buy :
+     histogram < 0 and volume_bearish ? color_strong_sell :
+     color_weak_sell
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SEÑALES DE TRADING
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Cruces básicos
+bullish_cross = ta.crossover(momentum, signal)
+bearish_cross = ta.crossunder(momentum, signal)
+
+// Señales fuertes (cruce + volumen confirmando)
+strong_buy_signal = bullish_cross and volume_bullish
+strong_sell_signal = bearish_cross and volume_bearish
+
+// Zonas extremas
+oversold = momentum < -30    // Muy sobreventa
+overbought = momentum > 30   // Muy sobrecompra
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PLOTEO
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Histograma principal (como MACD)
+plot(histogram, "Histograma", style=plot.style_columns, color=hist_color, linewidth=4)
+
+// Línea de momentum (azul)
+plot(momentum, "Momentum", color=color.new(#2196F3, 0), linewidth=2)
+
+// Línea de señal (naranja)
+plot(signal, "Señal", color=color.new(#FF9800, 0), linewidth=2)
+
+// Líneas de referencia
+hline(0, "Cero", color=color.gray, linestyle=hline.style_solid)
+hline(30, "Sobrecompra", color=color.new(color.red, 70), linestyle=hline.style_dashed)
+hline(-30, "Sobreventa", color=color.new(color.green, 70), linestyle=hline.style_dashed)
+
+// Fondo desactivado (transparente)
+// bgcolor(oversold ? color.new(color.green, 95) : overbought ? color.new(color.red, 95) : na)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SEÑALES VISUALES
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Cruces normales
+plotshape(show_signals and bullish_cross and not strong_buy_signal, "Compra",
+     shape.triangleup, location.bottom, color.new(color.green, 30),
+     size=size.small)
+
+plotshape(show_signals and bearish_cross and not strong_sell_signal, "Venta",
+     shape.triangledown, location.top, color.new(color.red, 30),
+     size=size.small)
+
+// Señales FUERTES (con volumen)
+plotshape(show_signals and strong_buy_signal, "COMPRA FUERTE",
+     shape.labelup, location.bottom, color.new(color.lime, 0),
+     text="COMPRA", textcolor=color.white, size=size.normal)
+
+plotshape(show_signals and strong_sell_signal, "VENTA FUERTE",
+     shape.labeldown, location.top, color.new(color.maroon, 0),
+     text="VENTA", textcolor=color.white, size=size.normal)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// TABLA GUÍA
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_table and barstate.islast
+    var table guide = table.new(position.top_right, 2, 6,
+         border_width=1,
+         border_color=color.gray,
+         frame_width=1,
+         frame_color=color.gray)
+
+    // Header
+    table.cell(guide, 0, 0, "Koncorde Ultra Simple",
+         text_color=color.white,
+         bgcolor=color.new(color.purple, 20),
+         text_size=size.normal)
+    table.merge_cells(guide, 0, 0, 1, 0)
+
+    // Estado actual
+    string estado = momentum > signal ? "ALCISTA 🟢" : "BAJISTA 🔴"
+    color estado_color = momentum > signal ? color.new(color.green, 70) : color.new(color.red, 70)
+
+    table.cell(guide, 0, 1, "Tendencia",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(guide, 1, 1, estado,
+         text_color=color.white,
+         bgcolor=estado_color)
+
+    // Zona
+    string zona = oversold ? "SOBREVENTA" : (overbought ? "SOBRECOMPRA" : "NEUTRAL")
+    color zona_color = oversold ? color.new(color.green, 70) : (overbought ? color.new(color.red, 70) : color.new(color.gray, 70))
+
+    table.cell(guide, 0, 2, "Zona",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(guide, 1, 2, zona,
+         text_color=color.white,
+         bgcolor=zona_color)
+
+    // Volumen
+    string vol_status = volume_bullish ? "ALCISTA 📈" : (volume_bearish ? "BAJISTA 📉" : "NORMAL")
+    color vol_color = volume_bullish ? color.new(color.green, 70) : (volume_bearish ? color.new(color.red, 70) : color.new(color.gray, 70))
+
+    table.cell(guide, 0, 3, "Volumen",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(guide, 1, 3, vol_status,
+         text_color=color.white,
+         bgcolor=vol_color)
+
+    // Histograma
+    table.cell(guide, 0, 4, "Histograma",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(guide, 1, 4, str.tostring(histogram, "#.#"),
+         text_color=color.white,
+         bgcolor=hist_color)
+
+    // Acción recomendada
+    string accion = "ESPERAR ⏸"
+    color accion_color = color.new(color.gray, 70)
+
+    if strong_buy_signal
+        accion := "COMPRAR! 🚀"
+        accion_color := color.new(color.lime, 50)
+    else if strong_sell_signal
+        accion := "VENDER! ⚠️"
+        accion_color := color.new(color.maroon, 50)
+    else if bullish_cross and oversold
+        accion := "Compra (débil)"
+        accion_color := color.new(color.green, 70)
+    else if bearish_cross and overbought
+        accion := "Venta (débil)"
+        accion_color := color.new(color.red, 70)
+
+    table.cell(guide, 0, 5, "Acción",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(guide, 1, 5, accion,
+         text_color=color.white,
+         bgcolor=accion_color)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ALERTAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+alertcondition(strong_buy_signal, "COMPRA FUERTE", "🚀 COMPRAR AHORA - Momentum alcista + Volumen fuerte")
+alertcondition(strong_sell_signal, "VENTA FUERTE", "⚠️ VENDER AHORA - Momentum bajista + Volumen fuerte")
+alertcondition(bullish_cross, "Cruce Alcista", "📈 Momentum cruzó por encima de Señal")
+alertcondition(bearish_cross, "Cruce Bajista", "📉 Momentum cruzó por debajo de Señal")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// GUÍA DE USO
+// ════════════════════════════════════════════════════════════════════════════════
+
+// KONCORDE ULTRA SIMPLE - GUÍA RÁPIDA:
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// 1. HISTOGRAMA (4 COLORES):
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//    🟢 VERDE BRILLANTE: Momentum alcista + Volumen comprador fuerte
+//       → La mejor condición para COMPRAR
+//
+//    🟢 VERDE PÁLIDO: Momentum alcista + Volumen normal
+//       → Alcista pero sin mucha fuerza
+//
+//    🔴 ROJO PÁLIDO: Momentum bajista + Volumen normal
+//       → Bajista pero sin mucha fuerza
+//
+//    🔴 ROJO OSCURO: Momentum bajista + Volumen vendedor fuerte
+//       → La mejor condición para VENDER
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2. LÍNEAS:
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//    🔵 AZUL (Momentum): Línea principal basada en MFI (precio + volumen)
+//       - Por encima de 0 = Presión compradora
+//       - Por debajo de 0 = Presión vendedora
+//
+//    🟠 NARANJA (Señal): Promedio del Momentum
+//       - Actúa como confirmación
+//       - Cruces generan señales
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// 3. SEÑALES:
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//    "COMPRA" (Label verde grande): Cruce alcista + Volumen fuerte
+//       → SEÑAL MÁS FUERTE - Alta probabilidad
+//
+//    ▲ (Triángulo verde): Cruce alcista + Volumen normal
+//       → Señal débil - Esperar confirmación
+//
+//    "VENTA" (Label rojo grande): Cruce bajista + Volumen fuerte
+//       → SEÑAL MÁS FUERTE - Alta probabilidad
+//
+//    ▼ (Triángulo rojo): Cruce bajista + Volumen normal
+//       → Señal débil - Esperar confirmación
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// 4. ZONAS:
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//    Por encima de +30 (línea roja): SOBRECOMPRA
+//       → Zona peligrosa para comprar
+//       → Buscar señales de venta
+//
+//    Entre -30 y +30: ZONA NEUTRAL
+//       → Trading normal
+//
+//    Por debajo de -30 (línea verde): SOBREVENTA
+//       → Zona peligrosa para vender
+//       → Buscar señales de compra
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// 5. CÓMO OPERAR (SIMPLE):
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//    ✅ COMPRA PERFECTA:
+//       - Aparece label "COMPRA" verde
+//       - Histograma VERDE BRILLANTE
+//       - En zona de SOBREVENTA o NEUTRAL
+//       - Momentum cruzando hacia arriba
+//
+//    ✅ VENTA PERFECTA:
+//       - Aparece label "VENTA" rojo
+//       - Histograma ROJO OSCURO
+//       - En zona de SOBRECOMPRA o NEUTRAL
+//       - Momentum cruzando hacia abajo
+//
+//    ⚠️ EVITAR:
+//       - Comprar en SOBRECOMPRA (por encima de +30)
+//       - Vender en SOBREVENTA (por debajo de -30)
+//       - Señales sin volumen (triángulos pequeños)
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// 6. TABLA GUÍA (esquina superior derecha):
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//    Tendencia: Dirección actual del momentum
+//    Zona: Sobreventa/Neutral/Sobrecompra
+//    Volumen: Estado del volumen (alcista/bajista/normal)
+//    Histograma: Valor actual con color
+//    Acción: Recomendación automática
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// 7. DIFERENCIAS CON OTROS KONCORDE:
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//    VS Koncorde Original:
+//    ✓ Solo 2 líneas en lugar de 4
+//    ✓ Histograma con 4 colores claros
+//    ✓ Señales automáticas con labels
+//    ✓ Tabla con recomendación de acción
+//    ✓ Mucho más visual y fácil de leer
+//
+//    VS Koncorde Simple:
+//    ✓ Menos líneas (2 vs 4)
+//    ✓ Histograma en lugar de líneas superpuestas
+//    ✓ Colores más claros y diferenciados
+//    ✓ Recomendación explícita de "Acción"
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// 8. COMBINACIÓN CON OTROS INDICADORES:
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//    + MACD: Label "COMPRA" + MACD alcista = Máxima confirmación
+//    + Supertrend: Label "COMPRA" + Supertrend alcista = Alta probabilidad
+//    + Squeeze: Label "COMPRA" + Squeeze OFF = Ruptura con volumen
+//    + Precio: Label "COMPRA" + Precio > EMA200 = Tendencia confirmada
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// RESUMEN EN 3 PASOS:
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// 1. Mira el HISTOGRAMA:
+//    - Verde brillante = Bueno para comprar
+//    - Rojo oscuro = Bueno para vender
+//
+// 2. Espera la SEÑAL:
+//    - Label "COMPRA" o "VENTA" (las mejores)
+//    - O triángulos ▲▼ (señales débiles)
+//
+// 3. Verifica la ZONA:
+//    - No comprar en sobrecompra (+30)
+//    - No vender en sobreventa (-30)
+//
+// ¡ASÍ DE SIMPLE!

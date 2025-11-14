@@ -1,0 +1,34 @@
+//@version=6
+//© Diego Santacruz
+indicator("Test Premarket Data", shorttitle="Test_PM", overlay=true)
+
+// Obtener precio de cierre del día anterior
+prev_close = request.security(syminfo.tickerid, "D", close[1])
+
+// Precio actual
+current_price = close
+
+// Detectar si estamos en premarket
+is_premarket = session.ispremarket
+
+// Crear tabla
+if barstate.islast
+    var table info = table.new(position.top_right, 2, 4, border_width=2)
+
+    // Header
+    table.cell(info, 0, 0, "DATA TEST", text_color=color.white, bgcolor=color.blue)
+    table.merge_cells(info, 0, 0, 1, 0)
+
+    // Sesión
+    session_status = is_premarket ? "PREMARKET" : "REGULAR"
+    session_color = is_premarket ? color.green : color.gray
+    table.cell(info, 0, 1, "Sesión", text_color=color.white, bgcolor=color.gray)
+    table.cell(info, 1, 1, session_status, text_color=color.white, bgcolor=session_color)
+
+    // Cierre anterior
+    table.cell(info, 0, 2, "Cierre Prev", text_color=color.white, bgcolor=color.gray)
+    table.cell(info, 1, 2, str.tostring(prev_close, "#.##"), text_color=color.white, bgcolor=color.gray)
+
+    // Precio actual
+    table.cell(info, 0, 3, "Precio Actual", text_color=color.white, bgcolor=color.gray)
+    table.cell(info, 1, 3, str.tostring(current_price, "#.##"), text_color=color.white, bgcolor=color.gray)

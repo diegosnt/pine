@@ -1,6 +1,6 @@
 //@version=6
-//© diegosantacruz
-indicator(title="MACD Min/Max v6", shorttitle="MACDv6", max_bars_back=5000)
+//© Diego Santacruz
+indicator(title="MACD Advanced v6", shorttitle="MACD_ProV6", max_bars_back=5000)
 
 // ════════════════════════════════════════════════════════════════════════════════
 // INPUTS
@@ -14,9 +14,27 @@ signal_length = input.int(9, "Signal Smoothing", minval=1, maxval=50, group="MAC
 sma_source = input.bool(false, "Simple MA (Oscillator)", group="MACD Settings", tooltip="Use SMA instead of EMA for oscillator calculation")
 sma_signal = input.bool(false, "Simple MA (Signal Line)", group="MACD Settings", tooltip="Use SMA instead of EMA for signal line")
 
+// Divergence Settings
+enable_divergence = input.bool(true, "Enable Divergence Detection", group="Divergence")
+div_lookback_right = input.int(5, "Pivot Lookback Right", minval=1, group="Divergence")
+div_lookback_left = input.int(5, "Pivot Lookback Left", minval=1, group="Divergence")
+div_max_lookback = input.int(60, "Max Pivot Lookback Range", minval=5, maxval=200, group="Divergence")
+
 // Display Options
-show_min_max_hist = input.bool(true, "Show 3K Periods Min-Max Histogram?", group="Display")
-show_min_max_ppo = input.bool(true, "Show 3K Periods Min-Max PPO?", group="Display")
+show_min_max_hist = input.bool(true, "Show 3K Periods Min-Max Histogram", group="Display")
+show_min_max_ppo = input.bool(true, "Show 3K Periods Min-Max PPO", group="Display")
+show_signals = input.bool(true, "Show Trading Signals", group="Display")
+show_zones = input.bool(true, "Show Overbought/Oversold Zones", group="Display")
+show_background = input.bool(true, "Show Trend Background", group="Display")
+show_table = input.bool(true, "Show Statistics Table", group="Display")
+table_position = input.string("top_right", "Table Position",
+     options=["top_left", "top_center", "top_right", "middle_left", "middle_center",
+              "middle_right", "bottom_left", "bottom_center", "bottom_right"],
+     group="Display")
+
+// Zone Settings
+zone_percentage = input.int(80, "Overbought/Oversold Zone %", minval=50, maxval=100, group="Zones",
+     tooltip="Percentage of historical range to mark as extreme zones")
 
 // Color Settings
 col_grow_above = input.color(#2AFF00, "Growing Above Zero", group="Colors", inline="hist1")
@@ -25,6 +43,11 @@ col_grow_below = input.color(#980000, "Growing Below Zero", group="Colors", inli
 col_fall_below = input.color(#FF0000, "Falling Below Zero", group="Colors", inline="hist2")
 col_ppo = input.color(#0042FF, "PPO Line", group="Colors", inline="lines")
 col_signal = input.color(#FFA200, "Signal Line", group="Colors", inline="lines")
+col_bullish_div = input.color(#00FF00, "Bullish Divergence", group="Colors", inline="div1")
+col_bearish_div = input.color(#FF0000, "Bearish Divergence", group="Colors", inline="div1")
+
+// Alert Settings
+enable_alerts = input.bool(true, "Enable Alerts", group="Alerts")
 
 // ════════════════════════════════════════════════════════════════════════════════
 // CUSTOM TYPES
@@ -39,6 +62,22 @@ type MinMaxRange
     float min_value
     float max_value
     int lookback_bars
+    float upper_zone
+    float lower_zone
+
+type DivergenceResult
+    bool bullish
+    bool bearish
+    int price_pivot_bar
+    int macd_pivot_bar
+
+type MACDStats
+    int total_crosses
+    int bullish_crosses
+    int bearish_crosses
+    float avg_histogram
+    float current_trend_bars
+    bool is_bullish_trend
 
 // ════════════════════════════════════════════════════════════════════════════════
 // CORE CALCULATION FUNCTIONS
@@ -56,8 +95,8 @@ calc_ppo(float source, int fast_len, int slow_len, bool use_sma) =>
     float slow_ma = calc_ma(source, slow_len, use_sma)
     slow_ma != 0 ? (fast_ma - slow_ma) / slow_ma * 100 : 0.0
 
-// Find historical min and max values
-calc_min_max(float value, int max_lookback) =>
+// Find historical min and max values with zones
+calc_min_max(float value, int max_lookback, int zone_pct) =>
     var float min_val = value
     var float max_val = value
 
@@ -65,7 +104,7 @@ calc_min_max(float value, int max_lookback) =>
         min_val := value
         max_val := value
 
-        // Calculate actual lookback range (ensure we don't exceed available bars)
+        // Calculate actual lookback range
         int available_bars = bar_index - 20
         available_bars := available_bars < 0 ? 0 : available_bars
         int lookback = math.min(available_bars, max_lookback)
@@ -76,7 +115,117 @@ calc_min_max(float value, int max_lookback) =>
                 min_val := math.min(value[i], min_val)
                 max_val := math.max(value[i], max_val)
 
-    MinMaxRange.new(min_val, max_val, bar_index)
+    // Calculate overbought/oversold zones
+    float value_range = max_val - min_val
+    float zone_threshold = value_range * (zone_pct / 100.0)
+    float upper_zone = max_val - (value_range - zone_threshold)
+    float lower_zone = min_val + (value_range - zone_threshold)
+
+    MinMaxRange.new(min_val, max_val, bar_index, upper_zone, lower_zone)
+
+// Detect pivot highs and lows
+// Verifica si el valor en src[rightBars] es un pivot high
+is_pivot_high(float src, int leftBars, int rightBars) =>
+    bool is_pivot = true
+
+    // Verificar barras a la izquierda (más atrás en el tiempo)
+    for i = 1 to leftBars
+        if src[rightBars] < src[rightBars + i]
+            is_pivot := false
+            break
+
+    // Verificar barras a la derecha (más cerca del presente)
+    if is_pivot
+        for i = 1 to rightBars
+            if src[rightBars] < src[rightBars - i]
+                is_pivot := false
+                break
+
+    is_pivot
+
+// Verifica si el valor en src[rightBars] es un pivot low
+is_pivot_low(float src, int leftBars, int rightBars) =>
+    bool is_pivot = true
+
+    // Verificar barras a la izquierda (más atrás en el tiempo)
+    for i = 1 to leftBars
+        if src[rightBars] > src[rightBars + i]
+            is_pivot := false
+            break
+
+    // Verificar barras a la derecha (más cerca del presente)
+    if is_pivot
+        for i = 1 to rightBars
+            if src[rightBars] > src[rightBars - i]
+                is_pivot := false
+                break
+
+    is_pivot
+
+// Detect divergences
+detect_divergence(float price_source, float indicator_source, int lb_left, int lb_right, int max_lb) =>
+    bool bullish_div = false
+    bool bearish_div = false
+    int price_pivot = 0
+    int ind_pivot = 0
+
+    // Current pivots (with offset for lookback right)
+    bool curr_price_low = is_pivot_low(price_source, lb_left, lb_right)
+    bool curr_price_high = is_pivot_high(price_source, lb_left, lb_right)
+    bool curr_ind_low = is_pivot_low(indicator_source, lb_left, lb_right)
+    bool curr_ind_high = is_pivot_high(indicator_source, lb_left, lb_right)
+
+    // Bullish divergence: price makes lower low, indicator makes higher low
+    if curr_price_low and curr_ind_low
+        for i = (lb_right + 1) to max_lb
+            // Crear una serie desplazada para verificar el pivot histórico
+            bool is_historical_pivot = true
+
+            // Verificar si price_source[i] es un pivot low
+            for j = 1 to lb_left
+                if price_source[i] > price_source[i + j]
+                    is_historical_pivot := false
+                    break
+
+            if is_historical_pivot
+                for j = 1 to lb_right
+                    if i - j >= 0 and price_source[i] > price_source[i - j]
+                        is_historical_pivot := false
+                        break
+
+            if is_historical_pivot
+                if price_source[lb_right] < price_source[i] and indicator_source[lb_right] > indicator_source[i]
+                    bullish_div := true
+                    price_pivot := i
+                    ind_pivot := lb_right
+                break
+
+    // Bearish divergence: price makes higher high, indicator makes lower high
+    if curr_price_high and curr_ind_high
+        for i = (lb_right + 1) to max_lb
+            // Crear una serie desplazada para verificar el pivot histórico
+            bool is_historical_pivot = true
+
+            // Verificar si price_source[i] es un pivot high
+            for j = 1 to lb_left
+                if price_source[i] < price_source[i + j]
+                    is_historical_pivot := false
+                    break
+
+            if is_historical_pivot
+                for j = 1 to lb_right
+                    if i - j >= 0 and price_source[i] < price_source[i - j]
+                        is_historical_pivot := false
+                        break
+
+            if is_historical_pivot
+                if price_source[lb_right] > price_source[i] and indicator_source[lb_right] < indicator_source[i]
+                    bearish_div := true
+                    price_pivot := i
+                    ind_pivot := lb_right
+                break
+
+    DivergenceResult.new(bullish_div, bearish_div, price_pivot, ind_pivot)
 
 // ════════════════════════════════════════════════════════════════════════════════
 // CUSTOM METHODS
@@ -85,7 +234,7 @@ calc_min_max(float value, int max_lookback) =>
 // Get histogram color based on current and previous values
 method get_hist_color(MACDResult this, MACDResult prev) =>
     bool is_above_zero = this.histogram >= 0
-    bool is_growing = prev.histogram < this.histogram
+    bool is_growing = na(prev) ? true : this.histogram > prev.histogram
 
     switch
         is_above_zero and is_growing => col_grow_above
@@ -120,6 +269,33 @@ method draw_lines(MinMaxRange this, color line_color, int line_width, string lin
              extend=extend.right
          )
 
+// Draw overbought/oversold zones
+method draw_zones(MinMaxRange this, color zone_color) =>
+    var line upper_zone_line = na
+    var line lower_zone_line = na
+
+    if barstate.islast
+        line.delete(upper_zone_line)
+        line.delete(lower_zone_line)
+
+        upper_zone_line := line.new(
+             this.lookback_bars - 20, this.upper_zone,
+             this.lookback_bars, this.upper_zone,
+             color=color.new(zone_color, 50),
+             style=line.style_dashed,
+             width=1,
+             extend=extend.right
+         )
+
+        lower_zone_line := line.new(
+             this.lookback_bars - 20, this.lower_zone,
+             this.lookback_bars, this.lower_zone,
+             color=color.new(zone_color, 50),
+             style=line.style_dashed,
+             width=1,
+             extend=extend.right
+         )
+
 // ════════════════════════════════════════════════════════════════════════════════
 // MACD CALCULATION
 // ════════════════════════════════════════════════════════════════════════════════
@@ -141,12 +317,76 @@ macd_previous := macd_current
 macd_current := MACDResult.new(ppo, signal, histogram)
 
 // ════════════════════════════════════════════════════════════════════════════════
+// SIGNALS DETECTION
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Crossover signals
+bool bullish_cross = ta.crossover(ppo, signal)
+bool bearish_cross = ta.crossunder(ppo, signal)
+
+// Zero line crosses
+bool zero_cross_up = ta.crossover(histogram, 0)
+bool zero_cross_down = ta.crossunder(histogram, 0)
+
+// Strong signals (crossover + histogram on correct side of zero)
+bool strong_buy = bullish_cross and histogram > 0
+bool strong_sell = bearish_cross and histogram < 0
+
+// ════════════════════════════════════════════════════════════════════════════════
+// DIVERGENCE DETECTION
+// ════════════════════════════════════════════════════════════════════════════════
+
+DivergenceResult divergence = enable_divergence ?
+     detect_divergence(close, histogram, div_lookback_left, div_lookback_right, div_max_lookback) :
+     DivergenceResult.new(false, false, 0, 0)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// STATISTICS TRACKING
+// ════════════════════════════════════════════════════════════════════════════════
+
+var int total_crosses = 0
+var int bullish_count = 0
+var int bearish_count = 0
+var float trend_bars = 0
+var float sum_histogram = 0
+var int total_bars = 0
+
+bool current_trend = histogram >= 0
+
+if bullish_cross
+    total_crosses += 1
+    bullish_count += 1
+    trend_bars := 0
+
+if bearish_cross
+    total_crosses += 1
+    bearish_count += 1
+    trend_bars := 0
+
+if current_trend
+    trend_bars += 1
+
+sum_histogram += math.abs(histogram)
+total_bars += 1
+
+float avg_histogram = total_bars > 0 ? sum_histogram / total_bars : 0
+
+MACDStats stats = MACDStats.new(
+     total_crosses,
+     bullish_count,
+     bearish_count,
+     avg_histogram,
+     trend_bars,
+     current_trend
+ )
+
+// ════════════════════════════════════════════════════════════════════════════════
 // MIN/MAX DETECTION
 // ════════════════════════════════════════════════════════════════════════════════
 
 // Calculate min/max ranges for PPO and Histogram
-MinMaxRange ppo_range = calc_min_max(ppo, 3000)
-MinMaxRange hist_range = calc_min_max(histogram, 3000)
+MinMaxRange ppo_range = calc_min_max(ppo, 3000, zone_percentage)
+MinMaxRange hist_range = calc_min_max(histogram, 3000, zone_percentage)
 
 // Draw min/max lines if enabled
 if show_min_max_ppo
@@ -154,6 +394,10 @@ if show_min_max_ppo
 
 if show_min_max_hist
     hist_range.draw_lines(color.gray, 1, line.style_dotted)
+
+// Draw zones if enabled
+if show_zones
+    hist_range.draw_zones(color.orange)
 
 // ════════════════════════════════════════════════════════════════════════════════
 // PLOTTING
@@ -172,4 +416,219 @@ plot(ppo, title="PPO", color=col_ppo, linewidth=2)
 plot(signal, title="Signal", color=col_signal, linewidth=2)
 
 // Zero line
-hline(0, color=color.black, linestyle=hline.style_solid, linewidth=1, title="Zero Line")
+hline(0, color=color.gray, linestyle=hline.style_solid, linewidth=1, title="Zero Line")
+
+// Background color for trend
+bgcolor(show_background ? (histogram > 0 ? color.new(color.green, 95) : color.new(color.red, 95)) : na,
+     title="Trend Background")
+
+// Trading signals
+plotshape(show_signals and bullish_cross, "Bullish Cross", shape.triangleup,
+     location.bottom, color.new(color.green, 0), size=size.small, offset=-signal_length)
+
+plotshape(show_signals and bearish_cross, "Bearish Cross", shape.triangledown,
+     location.top, color.new(color.red, 0), size=size.small, offset=-signal_length)
+
+// Strong signals
+plotshape(show_signals and strong_buy, "Strong Buy", shape.circle,
+     location.bottom, color.new(color.lime, 0), size=size.tiny, offset=-signal_length)
+
+plotshape(show_signals and strong_sell, "Strong Sell", shape.circle,
+     location.top, color.new(color.maroon, 0), size=size.tiny, offset=-signal_length)
+
+// Divergence markers
+plotshape(enable_divergence and divergence.bullish, "Bullish Divergence", shape.labelup,
+     location.bottom, col_bullish_div, text="Bull Div", textcolor=color.white,
+     size=size.small, offset=-div_lookback_right)
+
+plotshape(enable_divergence and divergence.bearish, "Bearish Divergence", shape.labeldown,
+     location.top, col_bearish_div, text="Bear Div", textcolor=color.white,
+     size=size.small, offset=-div_lookback_right)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// DIVERGENCE LINES
+// ════════════════════════════════════════════════════════════════════════════════
+
+if enable_divergence and (divergence.bullish or divergence.bearish)
+    var line div_line = na
+
+    if not na(div_line)
+        line.delete(div_line)
+
+    if divergence.bullish
+        div_line := line.new(
+             bar_index - divergence.price_pivot_bar,
+             histogram[divergence.price_pivot_bar],
+             bar_index - div_lookback_right,
+             histogram[div_lookback_right],
+             color=col_bullish_div,
+             width=2,
+             style=line.style_dashed
+         )
+
+    if divergence.bearish
+        div_line := line.new(
+             bar_index - divergence.price_pivot_bar,
+             histogram[divergence.price_pivot_bar],
+             bar_index - div_lookback_right,
+             histogram[div_lookback_right],
+             color=col_bearish_div,
+             width=2,
+             style=line.style_dashed
+         )
+
+// ════════════════════════════════════════════════════════════════════════════════
+// STATISTICS TABLE
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_table and barstate.islast
+    // Determine table position
+    table_pos = switch table_position
+        "top_left" => position.top_left
+        "top_center" => position.top_center
+        "top_right" => position.top_right
+        "middle_left" => position.middle_left
+        "middle_center" => position.middle_center
+        "middle_right" => position.middle_right
+        "bottom_left" => position.bottom_left
+        "bottom_center" => position.bottom_center
+        "bottom_right" => position.bottom_right
+        => position.top_right
+
+    // Create table
+    var table stats_table = table.new(table_pos, 2, 9,
+         border_width=1,
+         border_color=color.gray,
+         frame_width=1,
+         frame_color=color.gray)
+
+    // Header
+    table.cell(stats_table, 0, 0, "MACD Statistics",
+         text_color=color.white,
+         bgcolor=color.new(color.blue, 30),
+         text_size=size.normal)
+    table.merge_cells(stats_table, 0, 0, 1, 0)
+
+    // Current Trend
+    trend_text = stats.is_bullish_trend ? "ALCISTA ↑" : "BAJISTA ↓"
+    trend_color = stats.is_bullish_trend ? color.new(color.green, 70) : color.new(color.red, 70)
+
+    table.cell(stats_table, 0, 1, "Tendencia",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(stats_table, 1, 1, trend_text,
+         text_color=color.white,
+         bgcolor=trend_color)
+
+    // Current Values
+    table.cell(stats_table, 0, 2, "MACD",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(stats_table, 1, 2, str.tostring(ppo, "#.####"),
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80))
+
+    table.cell(stats_table, 0, 3, "Signal",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(stats_table, 1, 3, str.tostring(signal, "#.####"),
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80))
+
+    table.cell(stats_table, 0, 4, "Histogram",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(stats_table, 1, 4, str.tostring(histogram, "#.####"),
+         text_color=color.white,
+         bgcolor=trend_color)
+
+    // Trend duration
+    table.cell(stats_table, 0, 5, "Barras en Tendencia",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(stats_table, 1, 5, str.tostring(stats.current_trend_bars, "#"),
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80))
+
+    // Total crosses
+    table.cell(stats_table, 0, 6, "Total Cruces",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(stats_table, 1, 6, str.tostring(stats.total_crosses),
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80))
+
+    // Bullish vs Bearish
+    bullish_pct = stats.total_crosses > 0 ? (stats.bullish_crosses / stats.total_crosses * 100) : 0
+
+    table.cell(stats_table, 0, 7, "Alcistas/Bajistas",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(stats_table, 1, 7, str.tostring(stats.bullish_crosses) + "/" + str.tostring(stats.bearish_crosses),
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80))
+
+    // Average Histogram
+    table.cell(stats_table, 0, 8, "Histogram Promedio",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50))
+    table.cell(stats_table, 1, 8, str.tostring(stats.avg_histogram, "#.####"),
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80))
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ════════════════════════════════════════════════════════════════════════════════
+
+alertcondition(enable_alerts and bullish_cross, "MACD Bullish Crossover", "MACD cruzó por encima de Signal - Señal ALCISTA")
+alertcondition(enable_alerts and bearish_cross, "MACD Bearish Crossover", "MACD cruzó por debajo de Signal - Señal BAJISTA")
+alertcondition(enable_alerts and strong_buy, "MACD Strong Buy", "MACD cruce alcista FUERTE (por encima de cero)")
+alertcondition(enable_alerts and strong_sell, "MACD Strong Sell", "MACD cruce bajista FUERTE (por debajo de cero)")
+alertcondition(enable_alerts and zero_cross_up, "MACD Zero Cross Up", "MACD cruzó por encima de la línea cero")
+alertcondition(enable_alerts and zero_cross_down, "MACD Zero Cross Down", "MACD cruzó por debajo de la línea cero")
+alertcondition(enable_alerts and divergence.bullish, "Bullish Divergence", "Divergencia ALCISTA detectada")
+alertcondition(enable_alerts and divergence.bearish, "Bearish Divergence", "Divergencia BAJISTA detectada")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// USAGE NOTES
+// ════════════════════════════════════════════════════════════════════════════════
+
+// INTERPRETACIÓN:
+//
+// 1. SEÑALES BÁSICAS:
+//    - Triángulo Verde (▲): MACD cruzó por encima de Signal (Alcista)
+//    - Triángulo Rojo (▼): MACD cruzó por debajo de Signal (Bajista)
+//    - Círculo pequeño: Señal FUERTE (cruce con histograma del lado correcto de cero)
+//
+// 2. HISTOGRAMA (4 colores):
+//    - Verde Lima: Por encima de cero y creciendo (momentum alcista fuerte)
+//    - Verde Oscuro: Por encima de cero y cayendo (momentum alcista débil)
+//    - Rojo Oscuro: Por debajo de cero y cayendo (momentum bajista fuerte)
+//    - Rojo: Por debajo de cero y creciendo (momentum bajista débil)
+//
+// 3. DIVERGENCIAS:
+//    - "Bull Div" (Verde): Precio hace mínimo más bajo, MACD hace mínimo más alto → Reversión alcista
+//    - "Bear Div" (Rojo): Precio hace máximo más alto, MACD hace máximo más bajo → Reversión bajista
+//
+// 4. ZONAS (Líneas punteadas):
+//    - Zona superior: Sobrecompra relativa (basada en 80% del rango histórico)
+//    - Zona inferior: Sobreventa relativa
+//    - Cuando el MACD entra/sale de estas zonas = condición extrema
+//
+// 5. ESTRATEGIAS:
+//    - Tendencia alcista: Usar cruces alcistas como entradas, ignorar señales bajistas débiles
+//    - Tendencia bajista: Usar cruces bajistas como salidas, evitar entradas alcistas
+//    - Divergencias + cruce = señal de alta probabilidad
+//    - Histograma creciendo = añadir a posiciones, decreciendo = reducir
+//
+// 6. COMBINACIONES CON OTROS INDICADORES:
+//    - MACD alcista + Squeeze OFF = Ruptura con momentum
+//    - MACD alcista + Precio > EMA200 = Tendencia confirmada
+//    - Divergencia bajista + RSI > 70 = Tope probable
+//    - MACD cruce + ADX > 25 = Señal con fuerza de tendencia
+//
+// 7. ALERTAS DISPONIBLES:
+//    - Cruces alcistas/bajistas básicos
+//    - Cruces fuertes (con confirmación de posición)
+//    - Cruces de línea cero
+//    - Divergencias alcistas/bajistas

@@ -1,0 +1,315 @@
+//@version=6
+//© Diego Santacruz
+indicator("Premarket Scanner v6", shorttitle="PM_Scanner", overlay=false)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Umbrales
+threshold_moderate = input.float(2.0, "Umbral Moderado (%)", minval=0, step=0.5, group="Umbrales")
+threshold_strong = input.float(5.0, "Umbral Fuerte (%)", minval=0, step=0.5, group="Umbrales")
+threshold_extreme = input.float(10.0, "Umbral Extremo (%)", minval=0, step=0.5, group="Umbrales")
+
+// Scoring
+enable_volume_scoring = input.bool(true, "Incluir Volumen en Score", group="Scoring")
+vol_weight = input.float(30, "Peso del Volumen (%)", minval=0, maxval=50, step=5, group="Scoring")
+
+// Visualización
+show_gauge = input.bool(true, "Mostrar Medidor de Intensidad", group="Visualización")
+show_histogram = input.bool(true, "Mostrar Histograma", group="Visualización")
+show_table = input.bool(true, "Mostrar Dashboard", group="Visualización")
+table_position = input.string("middle_right", "Posición Dashboard", options=["top_left", "top_right", "middle_left", "middle_right", "bottom_left", "bottom_right"], group="Visualización")
+
+// Alertas
+enable_alerts = input.bool(true, "Activar Alertas", group="Alertas")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CUSTOM TYPES
+// ════════════════════════════════════════════════════════════════════════════════
+
+type PremarketScore
+    float price_score      // Score de cambio de precio (0-100)
+    float volume_score     // Score de volumen (0-100)
+    float total_score      // Score total combinado
+    string risk_level      // Nivel de riesgo: "NORMAL", "MODERADO", "ALTO", "EXTREMO"
+    string opportunity     // Tipo de oportunidad: "COMPRA", "VENTA", "NEUTRO"
+    color score_color      // Color según score
+
+type PremarketStats
+    float prev_close
+    float current_price
+    float change_pct
+    float volume_current
+    float volume_avg
+    float volume_ratio
+    bool is_premarket
+    int bars_to_open      // Barras estimadas hasta apertura
+
+// ════════════════════════════════════════════════════════════════════════════════
+// FUNCIONES CORE
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Obtener color según score
+get_score_color(score, is_positive) =>
+    base_color = switch
+        score >= 85 => is_positive ? #00FF00 : #FF0000  // Muy alto
+        score >= 65 => is_positive ? #88FF00 : #FF6600  // Alto
+        score >= 40 => is_positive ? #FFFF00 : #FFA500  // Moderado
+        => color.gray  // Bajo
+
+    base_color
+
+// Calcular estadísticas de premarket
+calc_premarket_stats() =>
+    // Precio de cierre anterior
+    prev_close = request.security(syminfo.tickerid, "D", close[1], barmerge.gaps_off, barmerge.lookahead_on)
+
+    // Precio actual
+    current = close
+
+    // Cambio porcentual
+    change_pct = prev_close != 0 ? ((current - prev_close) / prev_close) * 100 : 0
+
+    // Volumen
+    vol_current = volume
+    vol_avg = ta.sma(volume, 20)
+    vol_ratio = vol_avg != 0 ? vol_current / vol_avg : 1
+
+    // Sesión
+    is_pm = session.ispremarket
+
+    // Estimación de barras hasta apertura (aproximado para 5min chart)
+    // Asumiendo premarket 4:00 AM - 9:30 AM EST = 5.5 horas = 330 minutos = 66 barras de 5min
+    bars_to_open = is_pm ? na : na  // Se podría calcular con time
+
+    PremarketStats.new(prev_close, current, change_pct, vol_current, vol_avg, vol_ratio, is_pm, bars_to_open)
+
+// Calcular score de premarket
+calc_premarket_score(stats) =>
+    // Score de precio (0-100)
+    // Basado en % de cambio normalizado
+    abs_change = math.abs(stats.change_pct)
+
+    price_score = switch
+        abs_change >= threshold_extreme => 100.0
+        abs_change >= threshold_strong => 70.0 + (abs_change - threshold_strong) / (threshold_extreme - threshold_strong) * 30
+        abs_change >= threshold_moderate => 40.0 + (abs_change - threshold_moderate) / (threshold_strong - threshold_moderate) * 30
+        => (abs_change / threshold_moderate) * 40
+
+    // Score de volumen (0-100)
+    // Basado en ratio vs promedio
+    vol_score = switch
+        stats.volume_ratio >= 3.0 => 100.0
+        stats.volume_ratio >= 2.0 => 70.0 + (stats.volume_ratio - 2.0) * 30
+        stats.volume_ratio >= 1.0 => 40.0 + (stats.volume_ratio - 1.0) * 30
+        => stats.volume_ratio * 40
+
+    // Score total (combinado)
+    price_weight = 100 - vol_weight
+    total_score = enable_volume_scoring ? (price_score * price_weight / 100 + vol_score * vol_weight / 100) : price_score
+
+    // Nivel de riesgo/oportunidad
+    risk_level = switch
+        total_score >= 85 => "🔥 EXTREMO"
+        total_score >= 65 => "⚠️ ALTO"
+        total_score >= 40 => "⚡ MODERADO"
+        => "• NORMAL"
+
+    // Tipo de oportunidad
+    opportunity = switch
+        stats.change_pct > threshold_strong => "🚀 COMPRA FUERTE"
+        stats.change_pct > threshold_moderate => "📈 COMPRA"
+        stats.change_pct < -threshold_strong => "🔻 VENTA FUERTE"
+        stats.change_pct < -threshold_moderate => "📉 VENTA"
+        => "➡️ NEUTRO"
+
+    // Color según score
+    score_color = get_score_color(total_score, stats.change_pct > 0)
+
+    PremarketScore.new(price_score, vol_score, total_score, risk_level, opportunity, score_color)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CUSTOM METHODS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Obtener barra de progreso visual (gauge)
+method get_gauge_bar(PremarketScore this, width) =>
+    filled_bars = math.floor(this.total_score / 100 * width)
+    gauge = ""
+    for i = 0 to width - 1
+        gauge := gauge + (i < filled_bars ? "█" : "░")
+    gauge
+
+// Obtener calificación con letra
+method get_grade(PremarketScore this) =>
+    switch
+        this.total_score >= 90 => "A+"
+        this.total_score >= 80 => "A"
+        this.total_score >= 70 => "B+"
+        this.total_score >= 60 => "B"
+        this.total_score >= 50 => "C"
+        this.total_score >= 40 => "D"
+        => "F"
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CÁLCULOS
+// ════════════════════════════════════════════════════════════════════════════════
+
+stats = calc_premarket_stats()
+score = calc_premarket_score(stats)
+
+// Histograma: cambio % normalizado
+histogram_value = stats.is_premarket ? stats.change_pct : 0
+
+// Color del histograma basado en score
+hist_color = stats.is_premarket ? score.score_color : color.gray
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PLOTEO
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Línea de cero
+hline(0, "Zero", color=color.gray, linestyle=hline.style_solid)
+
+// Líneas de umbrales
+hline(threshold_moderate, "Moderado", color=color.new(color.yellow, 50), linestyle=hline.style_dashed)
+hline(threshold_strong, "Fuerte", color=color.new(color.orange, 50), linestyle=hline.style_dashed)
+hline(threshold_extreme, "Extremo", color=color.new(color.red, 50), linestyle=hline.style_dashed)
+hline(-threshold_moderate, "-Moderado", color=color.new(color.yellow, 50), linestyle=hline.style_dashed)
+hline(-threshold_strong, "-Fuerte", color=color.new(color.orange, 50), linestyle=hline.style_dashed)
+hline(-threshold_extreme, "-Extremo", color=color.new(color.red, 50), linestyle=hline.style_dashed)
+
+// Histograma de cambio %
+plot(show_histogram ? histogram_value : na, "Cambio %", color=hist_color, style=plot.style_histogram, linewidth=4)
+
+// Línea de cambio %
+plot(show_histogram ? histogram_value : na, "Línea Cambio", color=color.white, linewidth=1)
+
+// Fondo según nivel
+bgcolor(stats.is_premarket and score.total_score >= 65 ? color.new(score.score_color, 90) : na)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// DASHBOARD (TABLA)
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_table and barstate.islast
+    // Posición de tabla
+    pos = switch table_position
+        "top_left" => position.top_left
+        "top_right" => position.top_right
+        "middle_left" => position.middle_left
+        "middle_right" => position.middle_right
+        "bottom_left" => position.bottom_left
+        "bottom_right" => position.bottom_right
+        => position.middle_right
+
+    var table dashboard = table.new(pos, 2, 13, border_width=2, border_color=color.gray)
+
+    // === HEADER ===
+    table.cell(dashboard, 0, 0, "📊 PREMARKET SCANNER", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.normal)
+    table.merge_cells(dashboard, 0, 0, 1, 0)
+
+    // === ESTADO ===
+    session_text = stats.is_premarket ? "🟢 PREMARKET" : "⚪ REGULAR"
+    session_bg = stats.is_premarket ? color.new(color.green, 50) : color.new(color.gray, 70)
+    table.cell(dashboard, 0, 1, "Estado", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(dashboard, 1, 1, session_text, text_color=color.white, bgcolor=session_bg, text_size=size.small)
+
+    // === PRECIO ===
+    table.cell(dashboard, 0, 2, "Cierre Prev", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(dashboard, 1, 2, "$" + str.tostring(stats.prev_close, "#.##"), text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    table.cell(dashboard, 0, 3, "Precio Actual", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(dashboard, 1, 3, "$" + str.tostring(stats.current_price, "#.##"), text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    table.cell(dashboard, 0, 4, "Cambio %", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    change_text = (stats.change_pct > 0 ? "+" : "") + str.tostring(stats.change_pct, "#.##") + "%"
+    table.cell(dashboard, 1, 4, change_text, text_color=color.white, bgcolor=color.new(score.score_color, 40), text_size=size.normal)
+
+    // === VOLUMEN ===
+    table.cell(dashboard, 0, 5, "Vol Ratio", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    vol_text = str.tostring(stats.volume_ratio, "#.##") + "x"
+    vol_color = stats.volume_ratio >= 2 ? color.new(color.lime, 50) : stats.volume_ratio >= 1 ? color.new(color.yellow, 50) : color.new(color.gray, 70)
+    table.cell(dashboard, 1, 5, vol_text, text_color=color.white, bgcolor=vol_color, text_size=size.small)
+
+    // === SCORES ===
+    table.cell(dashboard, 0, 6, "Score Precio", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(dashboard, 1, 6, str.tostring(score.price_score, "#") + "/100", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    if enable_volume_scoring
+        table.cell(dashboard, 0, 7, "Score Vol", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+        table.cell(dashboard, 1, 7, str.tostring(score.volume_score, "#") + "/100", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    // === SCORE TOTAL ===
+    row = enable_volume_scoring ? 8 : 7
+    table.cell(dashboard, 0, row, "🎯 SCORE TOTAL", text_color=color.white, bgcolor=color.new(color.purple, 30), text_size=size.small)
+    table.cell(dashboard, 1, row, str.tostring(score.total_score, "#") + "/100", text_color=color.white, bgcolor=color.new(score.score_color, 30), text_size=size.normal)
+
+    // === GAUGE ===
+    if show_gauge
+        row += 1
+        table.cell(dashboard, 0, row, "Intensidad", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.tiny)
+        gauge_bar = score.get_gauge_bar(10)
+        table.cell(dashboard, 1, row, gauge_bar, text_color=score.score_color, bgcolor=color.new(color.black, 20), text_size=size.small)
+
+    // === CALIFICACIÓN ===
+    row += 1
+    table.cell(dashboard, 0, row, "Calificación", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(dashboard, 1, row, score.get_grade(), text_color=color.white, bgcolor=color.new(score.score_color, 40), text_size=size.large)
+
+    // === NIVEL DE RIESGO ===
+    row += 1
+    table.cell(dashboard, 0, row, "Nivel", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(dashboard, 1, row, score.risk_level, text_color=color.white, bgcolor=color.new(score.score_color, 30), text_size=size.small)
+
+    // === OPORTUNIDAD ===
+    row += 1
+    table.cell(dashboard, 0, row, "Señal", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(dashboard, 1, row, score.opportunity, text_color=color.white, bgcolor=color.new(score.score_color, 30), text_size=size.small)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ALERTAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+alertcondition(enable_alerts and stats.is_premarket and score.total_score >= 85, "Score EXTREMO", "🔥 Score EXTREMO detectado en premarket")
+
+alertcondition(enable_alerts and stats.is_premarket and score.total_score >= 65 and score.total_score < 85, "Score ALTO", "⚠️ Score ALTO detectado en premarket")
+
+alertcondition(enable_alerts and stats.is_premarket and math.abs(stats.change_pct) >= threshold_strong, "Movimiento Fuerte", "Movimiento fuerte detectado en premarket")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// NOTAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// INTERPRETACIÓN:
+//
+// 1. SCORE SYSTEM (0-100):
+//    - 90-100 (A+): Movimiento extremo, altísima atención
+//    - 80-89 (A): Movimiento muy fuerte
+//    - 70-79 (B+): Movimiento fuerte
+//    - 60-69 (B): Movimiento moderado-fuerte
+//    - 50-59 (C): Movimiento moderado
+//    - 40-49 (D): Movimiento leve
+//    - 0-39 (F): Movimiento mínimo
+//
+// 2. COMPONENTES DEL SCORE:
+//    - Score Precio: Basado en % de cambio vs umbrales
+//    - Score Volumen: Basado en ratio vs promedio 20 periodos
+//    - Total: Combinación ponderada (ajustable)
+//
+// 3. NIVELES DE RIESGO:
+//    - 🔥 EXTREMO (85+): Máxima volatilidad esperada
+//    - ⚠️ ALTO (65-84): Alta volatilidad
+//    - ⚡ MODERADO (40-64): Volatilidad moderada
+//    - • NORMAL (<40): Volatilidad normal
+//
+// 4. GAUGE (Medidor):
+//    - Representación visual del score (0-100)
+//    - █████████░ = 90/100
+//
+// 5. USO RECOMENDADO:
+//    - Timeframes: 1m, 5m, 15m para premarket
+//    - Combinar con análisis de soporte/resistencia
+//    - Score >85: Prepararse para gap significativo en apertura
+//    - Score >65 + volumen alto: Movimiento sostenido probable

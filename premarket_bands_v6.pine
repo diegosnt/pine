@@ -1,0 +1,257 @@
+//@version=6
+//© Diego Santacruz
+indicator("Premarket Bands v6", shorttitle="PM_Bands", overlay=true)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Bandas de niveles
+band_1 = input.float(1.0, "Banda 1 (%)", minval=0, step=0.25, group="Bandas")
+band_2 = input.float(2.0, "Banda 2 (%)", minval=0, step=0.25, group="Bandas")
+band_3 = input.float(3.0, "Banda 3 (%)", minval=0, step=0.25, group="Bandas")
+band_4 = input.float(5.0, "Banda 4 (%)", minval=0, step=0.5, group="Bandas")
+band_5 = input.float(8.0, "Banda 5 (%)", minval=0, step=0.5, group="Bandas")
+band_6 = input.float(10.0, "Banda 6 (%)", minval=0, step=0.5, group="Bandas")
+
+// Visualización
+show_bands = input.bool(true, "Mostrar Bandas", group="Visualización")
+show_fills = input.bool(true, "Rellenar Zonas", group="Visualización")
+show_labels = input.bool(true, "Mostrar Etiquetas de %", group="Visualización")
+show_price_projection = input.bool(true, "Mostrar Proyección de Apertura", group="Visualización")
+show_info_box = input.bool(true, "Mostrar Info Box", group="Visualización")
+
+// Colores
+color_positive = input.color(color.new(#00FF00, 0), "Color Alcista", group="Colores")
+color_negative = input.color(color.new(#FF0000, 0), "Color Bajista", group="Colores")
+color_neutral = input.color(color.new(color.gray, 0), "Color Neutral", group="Colores")
+transparency_bands = input.int(60, "Transparencia Bandas", minval=0, maxval=100, group="Colores")
+transparency_fills = input.int(90, "Transparencia Rellenos", minval=0, maxval=100, group="Colores")
+
+// Alertas
+enable_alerts = input.bool(true, "Activar Alertas", group="Alertas")
+alert_bands = input.string("4,5,6", "Alertar en Bandas (separadas por coma)", group="Alertas", tooltip="Ej: 4,5,6 alertará al tocar banda 4, 5 o 6")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CÁLCULOS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Obtener precio de cierre anterior
+prev_close = request.security(syminfo.tickerid, "D", close[1], barmerge.gaps_off, barmerge.lookahead_on)
+
+// Detectar sesión
+is_premarket = session.ispremarket
+
+// Calcular bandas superiores (directamente)
+band1_up = prev_close * (1 + band_1 / 100)
+band2_up = prev_close * (1 + band_2 / 100)
+band3_up = prev_close * (1 + band_3 / 100)
+band4_up = prev_close * (1 + band_4 / 100)
+band5_up = prev_close * (1 + band_5 / 100)
+band6_up = prev_close * (1 + band_6 / 100)
+
+// Calcular bandas inferiores (directamente)
+band1_down = prev_close * (1 - band_1 / 100)
+band2_down = prev_close * (1 - band_2 / 100)
+band3_down = prev_close * (1 - band_3 / 100)
+band4_down = prev_close * (1 - band_4 / 100)
+band5_down = prev_close * (1 - band_5 / 100)
+band6_down = prev_close * (1 - band_6 / 100)
+
+// Detectar toques de bandas
+touched_4_up = high >= band4_up
+touched_4_down = low <= band4_down
+touched_5_up = high >= band5_up
+touched_5_down = low <= band5_down
+touched_6_up = high >= band6_up
+touched_6_down = low <= band6_down
+
+// Calcular proyección de apertura
+price_change = close - prev_close
+change_pct = prev_close != 0 ? (price_change / prev_close) * 100 : 0
+projected_open = close
+projected_high = projected_open * 1.005
+projected_low = projected_open * 0.995
+direction = change_pct > 1 ? "🚀 ALCISTA" : change_pct < -1 ? "🔻 BAJISTA" : "➡️ NEUTRO"
+
+// Cambio actual
+current_change_pct = prev_close != 0 ? ((close - prev_close) / prev_close) * 100 : 0
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PLOTEO - LÍNEA BASE
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Línea de cierre anterior (referencia)
+plot(is_premarket ? prev_close : na, "Cierre Previo", color=color.new(color.white, 0), linewidth=3, style=plot.style_line)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PLOTEO - BANDAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Plotear todas las bandas
+p1_up = plot(is_premarket and show_bands ? band1_up : na, "Banda +1%", color=color.new(color_positive, transparency_bands), linewidth=1, style=plot.style_dashed)
+p1_down = plot(is_premarket and show_bands ? band1_down : na, "Banda -1%", color=color.new(color_negative, transparency_bands), linewidth=1, style=plot.style_dashed)
+p2_up = plot(is_premarket and show_bands ? band2_up : na, "Banda +2%", color=color.new(color_positive, transparency_bands), linewidth=1, style=plot.style_dashed)
+p2_down = plot(is_premarket and show_bands ? band2_down : na, "Banda -2%", color=color.new(color_negative, transparency_bands), linewidth=1, style=plot.style_dashed)
+p3_up = plot(is_premarket and show_bands ? band3_up : na, "Banda +3%", color=color.new(color_positive, transparency_bands), linewidth=1, style=plot.style_dashed)
+p3_down = plot(is_premarket and show_bands ? band3_down : na, "Banda -3%", color=color.new(color_negative, transparency_bands), linewidth=1, style=plot.style_dashed)
+p4_up = plot(is_premarket and show_bands ? band4_up : na, "Banda +5%", color=color.new(color_positive, transparency_bands), linewidth=2, style=plot.style_dashed)
+p4_down = plot(is_premarket and show_bands ? band4_down : na, "Banda -5%", color=color.new(color_negative, transparency_bands), linewidth=2, style=plot.style_dashed)
+p5_up = plot(is_premarket and show_bands ? band5_up : na, "Banda +8%", color=color.new(color_positive, transparency_bands), linewidth=2, style=plot.style_dashed)
+p5_down = plot(is_premarket and show_bands ? band5_down : na, "Banda -8%", color=color.new(color_negative, transparency_bands), linewidth=2, style=plot.style_dashed)
+p6_up = plot(is_premarket and show_bands ? band6_up : na, "Banda +10%", color=color.new(color_positive, transparency_bands), linewidth=2, style=plot.style_dashed)
+p6_down = plot(is_premarket and show_bands ? band6_down : na, "Banda -10%", color=color.new(color_negative, transparency_bands), linewidth=2, style=plot.style_dashed)
+
+// Rellenos entre bandas (opcional)
+fill(p1_up, p2_up, color=show_fills and is_premarket ? color.new(color_positive, transparency_fills) : na, title="Fill +1-2")
+fill(p2_up, p3_up, color=show_fills and is_premarket ? color.new(color_positive, transparency_fills - 5) : na, title="Fill +2-3")
+fill(p3_up, p4_up, color=show_fills and is_premarket ? color.new(color_positive, transparency_fills - 10) : na, title="Fill +3-4")
+fill(p4_up, p5_up, color=show_fills and is_premarket ? color.new(color_positive, transparency_fills - 15) : na, title="Fill +4-5")
+fill(p5_up, p6_up, color=show_fills and is_premarket ? color.new(color_positive, transparency_fills - 20) : na, title="Fill +5-6")
+
+fill(p1_down, p2_down, color=show_fills and is_premarket ? color.new(color_negative, transparency_fills) : na, title="Fill -1-2")
+fill(p2_down, p3_down, color=show_fills and is_premarket ? color.new(color_negative, transparency_fills - 5) : na, title="Fill -2-3")
+fill(p3_down, p4_down, color=show_fills and is_premarket ? color.new(color_negative, transparency_fills - 10) : na, title="Fill -3-4")
+fill(p4_down, p5_down, color=show_fills and is_premarket ? color.new(color_negative, transparency_fills - 15) : na, title="Fill -4-5")
+fill(p5_down, p6_down, color=show_fills and is_premarket ? color.new(color_negative, transparency_fills - 20) : na, title="Fill -5-6")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ETIQUETAS DE %
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_labels and is_premarket and barstate.islast
+    label.new(bar_index, band1_up, "+" + str.tostring(band_1, "#.##") + "%", xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color_positive, 50), textcolor=color.white, size=size.tiny)
+
+    label.new(bar_index, band1_down, "-" + str.tostring(band_1, "#.##") + "%", xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color_negative, 50), textcolor=color.white, size=size.tiny)
+
+    label.new(bar_index, band4_up, "+" + str.tostring(band_4, "#.##") + "%", xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color_positive, 30), textcolor=color.white, size=size.small)
+
+    label.new(bar_index, band4_down, "-" + str.tostring(band_4, "#.##") + "%", xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color_negative, 30), textcolor=color.white, size=size.small)
+
+    label.new(bar_index, band6_up, "+" + str.tostring(band_6, "#.##") + "%", xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color_positive, 0), textcolor=color.white, size=size.normal)
+
+    label.new(bar_index, band6_down, "-" + str.tostring(band_6, "#.##") + "%", xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color_negative, 0), textcolor=color.white, size=size.normal)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PROYECCIÓN DE APERTURA
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Línea de proyección
+plot(show_price_projection and is_premarket ? projected_open : na, "Proyección Apertura", color=color.new(color.yellow, 0), linewidth=2, style=plot.style_cross)
+
+// Rango proyectado
+plot(show_price_projection and is_premarket ? projected_high : na, "Proyección High", color=color.new(color.yellow, 70), linewidth=1, style=plot.style_circles)
+
+plot(show_price_projection and is_premarket ? projected_low : na, "Proyección Low", color=color.new(color.yellow, 70), linewidth=1, style=plot.style_circles)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// INFO BOX
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_info_box and barstate.islast
+    var table info = table.new(position.top_left, 2, 8, border_width=1)
+
+    // Header
+    table.cell(info, 0, 0, "PREMARKET BANDS", text_color=color.white, bgcolor=color.new(color.blue, 20))
+    table.merge_cells(info, 0, 0, 1, 0)
+
+    // Estado
+    session_txt = is_premarket ? "🟢 PREMARKET" : "⚪ REGULAR"
+    table.cell(info, 0, 1, "Estado", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(info, 1, 1, session_txt, text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    // Cierre anterior
+    table.cell(info, 0, 2, "Cierre Previo", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(info, 1, 2, "$" + str.tostring(prev_close, "#.##"), text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    // Precio actual
+    table.cell(info, 0, 3, "Precio Actual", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(info, 1, 3, "$" + str.tostring(close, "#.##"), text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    // Cambio %
+    change_txt = (current_change_pct > 0 ? "+" : "") + str.tostring(current_change_pct, "#.##") + "%"
+    change_color = current_change_pct > 0 ? color.new(color_positive, 50) : current_change_pct < 0 ? color.new(color_negative, 50) : color.new(color.gray, 70)
+    table.cell(info, 0, 4, "Cambio", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(info, 1, 4, change_txt, text_color=color.white, bgcolor=change_color, text_size=size.normal)
+
+    // Banda alcanzada
+    banda_actual = "Ninguna"
+    if math.abs(current_change_pct) >= band_6
+        banda_actual = "Banda 6 🔥🔥🔥"
+    else if math.abs(current_change_pct) >= band_5
+        banda_actual = "Banda 5 🔥🔥"
+    else if math.abs(current_change_pct) >= band_4
+        banda_actual = "Banda 4 🔥"
+    else if math.abs(current_change_pct) >= band_3
+        banda_actual = "Banda 3"
+    else if math.abs(current_change_pct) >= band_2
+        banda_actual = "Banda 2"
+    else if math.abs(current_change_pct) >= band_1
+        banda_actual = "Banda 1"
+
+    table.cell(info, 0, 5, "Banda Actual", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(info, 1, 5, banda_actual, text_color=color.white, bgcolor=change_color, text_size=size.small)
+
+    // Proyección de apertura
+    if show_price_projection and is_premarket
+        table.cell(info, 0, 6, "Proyección", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+        table.cell(info, 1, 6, "$" + str.tostring(projected_open, "#.##"), text_color=color.white, bgcolor=color.new(color.yellow, 60), text_size=size.small)
+
+        table.cell(info, 0, 7, "Dirección", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+        table.cell(info, 1, 7, direction, text_color=color.white, bgcolor=color.new(color.yellow, 60), text_size=size.small)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ALERTAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Parse alert bands
+alert_on_4 = str.contains(alert_bands, "4")
+alert_on_5 = str.contains(alert_bands, "5")
+alert_on_6 = str.contains(alert_bands, "6")
+
+// Detectar toque de bandas
+touched_4 = (touched_4_up or touched_4_down)
+touched_5 = (touched_5_up or touched_5_down)
+touched_6 = (touched_6_up or touched_6_down)
+
+alertcondition(enable_alerts and is_premarket and alert_on_4 and touched_4, "Banda 4 Alcanzada", "Precio tocó banda 4 (±" + str.tostring(band_4) + "%)")
+
+alertcondition(enable_alerts and is_premarket and alert_on_5 and touched_5, "Banda 5 Alcanzada", "🔥 Precio tocó banda 5 (±" + str.tostring(band_5) + "%)")
+
+alertcondition(enable_alerts and is_premarket and alert_on_6 and touched_6,"Banda 6 Alcanzada", "🔥🔥 Precio tocó banda 6 EXTREMA (±" + str.tostring(band_6) + "%)")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// NOTAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// INTERPRETACIÓN:
+//
+// 1. SISTEMA DE BANDAS:
+//    - Línea Blanca Central: Cierre del día anterior (referencia)
+//    - Bandas Verdes: Niveles de resistencia alcista
+//    - Bandas Rojas: Niveles de soporte bajista
+//    - 6 niveles configurables (default: 1%, 2%, 3%, 5%, 8%, 10%)
+//
+// 2. ESTILO DE LÍNEAS:
+//    - Línea Continua: Banda ya fue tocada
+//    - Línea Punteada: Banda no tocada aún
+//
+// 3. RELLENOS (Opcional):
+//    - Intensidad del color aumenta en bandas externas
+//    - Visualiza "zonas de peligro/oportunidad"
+//
+// 4. PROYECCIÓN DE APERTURA (Línea Amarilla):
+//    - Estimación de precio de apertura
+//    - Basada en momentum de premarket
+//    - Círculos amarillos: Rango proyectado (±0.5%)
+//
+// 5. ESTRATEGIAS:
+//    - Banda 6 tocada: Movimiento extremo, alta volatilidad en apertura
+//    - Bandas 4-5: Movimiento significativo, atención elevada
+//    - Bandas 1-3: Movimiento normal de premarket
+//    - Líneas continuas: Niveles ya testeados (pueden actuar como soporte/resistencia)
+//
+// 6. ALERTAS:
+//    - Configurables por banda (separar con comas: "4,5,6")
+//    - Útil para monitorear múltiples activos
+//

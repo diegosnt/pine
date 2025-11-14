@@ -1,0 +1,420 @@
+//@version=6
+//© Diego Santacruz
+indicator(title="Medias Móviles Simple v6", shorttitle="MediasSimp", overlay=true)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CONFIGURACIÓN
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Medias móviles
+ma_fast_length = input.int(20, "Media Rápida (EMA)", minval=1, group="Medias Móviles")
+ma_slow_length = input.int(50, "Media Lenta (EMA)", minval=1, group="Medias Móviles")
+ma_trend_length = input.int(200, "Media de Tendencia (EMA)", minval=1, group="Medias Móviles")
+
+// Visualización
+show_signals = input.bool(true, "Mostrar Señales de Compra/Venta", group="Visualización")
+show_labels = input.bool(true, "Mostrar Labels con Precio", group="Visualización")
+show_table = input.bool(true, "Mostrar Tabla de Estado", group="Visualización")
+
+// Alertas
+enable_alerts = input.bool(true, "Activar Alertas", group="Alertas")
+
+// Colores
+color_fast = input.color(#2196F3, "Media Rápida (20)", group="Colores")
+color_slow = input.color(#FF9800, "Media Lenta (50)", group="Colores")
+color_trend = input.color(#9C27B0, "Media Tendencia (200)", group="Colores")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CÁLCULO DE MEDIAS MÓVILES
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Tres medias móviles exponenciales (EMA)
+ema_fast = ta.ema(close, ma_fast_length)   // EMA rápida (20)
+ema_slow = ta.ema(close, ma_slow_length)   // EMA lenta (50)
+ema_trend = ta.ema(close, ma_trend_length) // EMA de tendencia (200)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SEÑALES DE TRADING
+// ════════════════════════════════════════════════════════════════════════════════
+
+// SEÑAL DE COMPRA: EMA rápida cruza por ENCIMA de EMA lenta
+buy_signal = ta.crossover(ema_fast, ema_slow)
+
+// SEÑAL DE VENTA: EMA rápida cruza por DEBAJO de EMA lenta
+sell_signal = ta.crossunder(ema_fast, ema_slow)
+
+// CONFIRMACIÓN DE TENDENCIA
+// Tendencia alcista = precio por encima de EMA 200
+// Tendencia bajista = precio por debajo de EMA 200
+is_uptrend = close > ema_trend
+is_downtrend = close < ema_trend
+
+// SEÑALES FUERTES (con confirmación de tendencia)
+strong_buy = buy_signal and is_uptrend   // Compra + tendencia alcista
+strong_sell = sell_signal and is_downtrend // Venta + tendencia bajista
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ANÁLISIS DE POSICIÓN DEL PRECIO
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Alineación de medias (todas en orden = tendencia fuerte)
+bullish_alignment = ema_fast > ema_slow and ema_slow > ema_trend // Alineación alcista
+bearish_alignment = ema_fast < ema_slow and ema_slow < ema_trend // Alineación bajista
+
+// Distancia del precio a las medias (%)
+distance_to_fast = ((close - ema_fast) / ema_fast) * 100
+distance_to_trend = ((close - ema_trend) / ema_trend) * 100
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PLOTEO DE MEDIAS MÓVILES
+// ════════════════════════════════════════════════════════════════════════════════
+
+plot(ema_fast, "EMA 20", color=color_fast, linewidth=2)
+plot(ema_slow, "EMA 50", color=color_slow, linewidth=2)
+plot(ema_trend, "EMA 200", color=color_trend, linewidth=3)
+
+// Relleno entre medias rápida y lenta
+fill_color = ema_fast > ema_slow ? color.new(color.green, 90) : color.new(color.red, 90)
+fill(plot(ema_fast), plot(ema_slow), color=fill_color, title="Relleno EMA 20-50")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SEÑALES VISUALES
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Señales de compra
+plotshape(show_signals and buy_signal and not strong_buy, "Compra",
+     shape.triangleup, location.belowbar, color.new(color.green, 30),
+     size=size.small)
+
+plotshape(show_signals and strong_buy, "COMPRA FUERTE",
+     shape.triangleup, location.belowbar, color.new(color.lime, 0),
+     size=size.normal)
+
+// Señales de venta
+plotshape(show_signals and sell_signal and not strong_sell, "Venta",
+     shape.triangledown, location.abovebar, color.new(color.red, 30),
+     size=size.small)
+
+plotshape(show_signals and strong_sell, "VENTA FUERTE",
+     shape.triangledown, location.abovebar, color.new(color.maroon, 0),
+     size=size.normal)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// LABELS CON PRECIO
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Label de COMPRA con precio
+if show_labels and buy_signal
+    label_text = strong_buy ? "COMPRA FUERTE\n$" + str.tostring(close, "#.##") : "Compra\n$" + str.tostring(close, "#.##")
+    label_color = strong_buy ? color.new(color.lime, 0) : color.new(color.green, 20)
+
+    label.new(bar_index, low,
+         text=label_text,
+         color=label_color,
+         textcolor=color.white,
+         style=label.style_label_up,
+         size=size.normal)
+
+// Label de VENTA con precio
+if show_labels and sell_signal
+    label_text = strong_sell ? "VENTA FUERTE\n$" + str.tostring(close, "#.##") : "Venta\n$" + str.tostring(close, "#.##")
+    label_color = strong_sell ? color.new(color.maroon, 0) : color.new(color.red, 20)
+
+    label.new(bar_index, high,
+         text=label_text,
+         color=label_color,
+         textcolor=color.white,
+         style=label.style_label_down,
+         size=size.normal)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// TABLA DE ESTADO
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_table and barstate.islast
+    var table status_table = table.new(position.top_right, 2, 8,
+         border_width=1,
+         border_color=color.gray,
+         frame_width=1,
+         frame_color=color.gray)
+
+    // Header
+    table.cell(status_table, 0, 0, "Estado de Medias",
+         text_color=color.white,
+         bgcolor=color.new(color.blue, 20),
+         text_size=size.normal)
+    table.merge_cells(status_table, 0, 0, 1, 0)
+
+    // Precio actual
+    table.cell(status_table, 0, 1, "Precio",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.normal)
+    table.cell(status_table, 1, 1, "$" + str.tostring(close, "#.##"),
+         text_color=color.white,
+         bgcolor=color.new(color.blue, 70),
+         text_size=size.normal)
+
+    // Tendencia principal (vs EMA 200)
+    trend_text = is_uptrend ? "ALCISTA ↑" : "BAJISTA ↓"
+    trend_color = is_uptrend ? color.new(color.green, 70) : color.new(color.red, 70)
+
+    table.cell(status_table, 0, 2, "Tendencia",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.normal)
+    table.cell(status_table, 1, 2, trend_text,
+         text_color=color.white,
+         bgcolor=trend_color,
+         text_size=size.normal)
+
+    // Alineación de medias
+    alignment_text = bullish_alignment ? "ALCISTA 🟢" : (bearish_alignment ? "BAJISTA 🔴" : "MIXTA ⚪")
+    alignment_color = bullish_alignment ? color.new(color.green, 70) : (bearish_alignment ? color.new(color.red, 70) : color.new(color.gray, 70))
+
+    table.cell(status_table, 0, 3, "Alineación",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.small)
+    table.cell(status_table, 1, 3, alignment_text,
+         text_color=color.white,
+         bgcolor=alignment_color,
+         text_size=size.small)
+
+    // EMA 20
+    table.cell(status_table, 0, 4, "EMA 20",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.small)
+    table.cell(status_table, 1, 4, "$" + str.tostring(ema_fast, "#.##"),
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80),
+         text_size=size.small)
+
+    // EMA 50
+    table.cell(status_table, 0, 5, "EMA 50",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.small)
+    table.cell(status_table, 1, 5, "$" + str.tostring(ema_slow, "#.##"),
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80),
+         text_size=size.small)
+
+    // EMA 200
+    table.cell(status_table, 0, 6, "EMA 200",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.small)
+    table.cell(status_table, 1, 6, "$" + str.tostring(ema_trend, "#.##"),
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80),
+         text_size=size.small)
+
+    // Acción recomendada
+    string action = "ESPERAR ⏸"
+    color action_color = color.new(color.gray, 70)
+
+    if strong_buy
+        action := "COMPRAR 🚀\n$" + str.tostring(close, "#.##")
+        action_color := color.new(color.lime, 50)
+    else if strong_sell
+        action := "VENDER ⚠️\n$" + str.tostring(close, "#.##")
+        action_color := color.new(color.maroon, 50)
+    else if buy_signal
+        action := "Compra (débil)\n$" + str.tostring(close, "#.##")
+        action_color := color.new(color.green, 70)
+    else if sell_signal
+        action := "Venta (débil)\n$" + str.tostring(close, "#.##")
+        action_color := color.new(color.red, 70)
+    else if bullish_alignment and is_uptrend
+        action := "MANTENER LONG ✓"
+        action_color := color.new(color.green, 70)
+    else if bearish_alignment and is_downtrend
+        action := "MANTENER SHORT ✓"
+        action_color := color.new(color.red, 70)
+
+    table.cell(status_table, 0, 7, "Acción",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.normal)
+    table.cell(status_table, 1, 7, action,
+         text_color=color.white,
+         bgcolor=action_color,
+         text_size=size.normal)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ALERTAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+alertcondition(enable_alerts and strong_buy,
+     "COMPRA FUERTE",
+     "🚀 COMPRAR AHORA en ${{close}} - EMA 20 cruzó EMA 50 en tendencia alcista")
+
+alertcondition(enable_alerts and strong_sell,
+     "VENTA FUERTE",
+     "⚠️ VENDER AHORA en ${{close}} - EMA 20 cruzó EMA 50 en tendencia bajista")
+
+alertcondition(enable_alerts and buy_signal,
+     "Señal de Compra",
+     "📈 Compra en ${{close}} - EMA 20 cruzó por encima de EMA 50")
+
+alertcondition(enable_alerts and sell_signal,
+     "Señal de Venta",
+     "📉 Venta en ${{close}} - EMA 20 cruzó por debajo de EMA 50")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// GUÍA DE USO
+// ════════════════════════════════════════════════════════════════════════════════
+
+// MEDIAS MÓVILES SIMPLE - GUÍA RÁPIDA:
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// 1. LAS 3 MEDIAS:
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//    🔵 AZUL (EMA 20): Media RÁPIDA
+//       - Sigue el precio de cerca
+//       - Reacciona rápido a cambios
+//
+//    🟠 NARANJA (EMA 50): Media LENTA
+//       - Más estable que la rápida
+//       - Filtra ruido del mercado
+//
+//    🟣 MORADO (EMA 200): Media de TENDENCIA
+//       - Define la tendencia principal
+//       - Soporte/resistencia clave
+//       - Precio arriba = alcista, abajo = bajista
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2. SEÑALES DE TRADING:
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//    🟢 COMPRA FUERTE (triángulo grande verde):
+//       - EMA 20 cruza por encima de EMA 50
+//       - Precio por encima de EMA 200
+//       - Label muestra: "COMPRA FUERTE" + precio
+//       → Esta es la MEJOR señal de compra
+//
+//    ▲ Compra débil (triángulo pequeño):
+//       - EMA 20 cruza por encima de EMA 50
+//       - Precio por debajo de EMA 200 (contra tendencia)
+//       - Label muestra: "Compra" + precio
+//       → Señal más arriesgada
+//
+//    🔴 VENTA FUERTE (triángulo grande rojo):
+//       - EMA 20 cruza por debajo de EMA 50
+//       - Precio por debajo de EMA 200
+//       - Label muestra: "VENTA FUERTE" + precio
+//       → Esta es la MEJOR señal de venta
+//
+//    ▼ Venta débil (triángulo pequeño):
+//       - EMA 20 cruza por debajo de EMA 50
+//       - Precio por encima de EMA 200 (contra tendencia)
+//       - Label muestra: "Venta" + precio
+//       → Señal más arriesgada
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// 3. LABELS CON PRECIO:
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//    Cada señal muestra un label grande con:
+//    - Tipo de señal (COMPRA FUERTE, Compra, etc.)
+//    - Precio exacto al que se generó la señal
+//    - Color verde para compras, rojo para ventas
+//    - Tamaño grande para señales fuertes, normal para débiles
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// 4. TABLA DE ESTADO:
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//    Precio: Precio actual en tiempo real
+//    Tendencia: ALCISTA ↑ o BAJISTA ↓ (según EMA 200)
+//    Alineación: ALCISTA/BAJISTA/MIXTA (orden de las 3 EMAs)
+//    EMA 20/50/200: Valores actuales de cada media
+//    Acción: Recomendación clara con precio
+//
+//    Posibles acciones:
+//    - COMPRAR 🚀 $X.XX (señal fuerte de compra)
+//    - VENDER ⚠️ $X.XX (señal fuerte de venta)
+//    - Compra (débil) $X.XX
+//    - Venta (débil) $X.XX
+//    - MANTENER LONG ✓ (tendencia alcista activa)
+//    - MANTENER SHORT ✓ (tendencia bajista activa)
+//    - ESPERAR ⏸ (sin señal clara)
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// 5. ALINEACIÓN DE MEDIAS:
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//    🟢 ALINEACIÓN ALCISTA (mejor escenario):
+//       EMA 20 > EMA 50 > EMA 200
+//       → Todas las medias en orden ascendente
+//       → Tendencia alcista MUY FUERTE
+//       → Buscar solo compras
+//
+//    🔴 ALINEACIÓN BAJISTA (peor escenario):
+//       EMA 20 < EMA 50 < EMA 200
+//       → Todas las medias en orden descendente
+//       → Tendencia bajista MUY FUERTE
+//       → Buscar solo ventas
+//
+//    ⚪ ALINEACIÓN MIXTA (sin claridad):
+//       Medias entrelazadas
+//       → Mercado sin tendencia clara
+//       → Evitar operar o esperar señal fuerte
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// 6. CÓMO OPERAR (PASO A PASO):
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//    PASO 1: Verifica la TENDENCIA (EMA 200)
+//    - Precio > EMA 200 = Buscar COMPRAS
+//    - Precio < EMA 200 = Buscar VENTAS
+//
+//    PASO 2: Espera la SEÑAL
+//    - Aparece label "COMPRA FUERTE" o "VENTA FUERTE"
+//    - Mira el precio en el label
+//
+//    PASO 3: Verifica la ALINEACIÓN
+//    - Alineación alcista + COMPRA FUERTE = Entra sin miedo
+//    - Alineación bajista + VENTA FUERTE = Entra sin miedo
+//    - Alineación mixta = Espera mejor oportunidad
+//
+//    PASO 4: Ejecuta al PRECIO mostrado
+//    - El label te muestra el precio exacto
+//    - Entra lo más cerca posible de ese precio
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// 7. EJEMPLO REAL:
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//    Aparece label: "COMPRA FUERTE\n$45.23"
+//
+//    Verificas:
+//    ✓ Precio ($45.23) > EMA 200 ($42.00)
+//    ✓ Alineación: ALCISTA 🟢
+//    ✓ Tabla dice: "COMPRAR 🚀 $45.23"
+//
+//    Acción: COMPRAR cerca de $45.23
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// 8. ALERTAS:
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+//    Configura alertas en TradingView para:
+//    - COMPRA FUERTE: Te avisa cuando hay oportunidad de compra ideal
+//    - VENTA FUERTE: Te avisa cuando hay oportunidad de venta ideal
+//    - Compra/Venta normal: Señales menos prioritarias
+//
+//    Las alertas incluyen el precio exacto en el mensaje
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+// RESUMEN EN 3 REGLAS:
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// 1. Solo opera cuando aparece label "COMPRA FUERTE" o "VENTA FUERTE"
+// 2. Verifica que la alineación sea del mismo color (verde o rojo)
+// 3. Entra al precio que muestra el label
+//
+// ¡Así de simple! 📊

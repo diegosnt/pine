@@ -1,0 +1,243 @@
+//@version=6
+//© Diego Santacruz
+indicator(title="MACD Simple v6", shorttitle="macdSimple", overlay=false)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CONFIGURACIÓN BÁSICA
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Parámetros del MACD (valores estándar)
+fast_length = input.int(12, "Rápida (EMA)", minval=1, group="MACD")
+slow_length = input.int(26, "Lenta (EMA)", minval=1, group="MACD")
+signal_length = input.int(9, "Señal (EMA)", minval=1, group="MACD")
+
+// Opciones de visualización
+show_signals = input.bool(true, "Mostrar Señales de Compra/Venta", group="Visualización")
+show_crosses = input.bool(true, "Mostrar Cruces de Línea Cero", group="Visualización")
+show_table = input.bool(true, "Mostrar Tabla de Estado", group="Visualización")
+show_background = input.bool(false, "Fondo de Tendencia", group="Visualización")
+
+// Alertas
+enable_alerts = input.bool(true, "Activar Alertas", group="Alertas")
+
+// Colores
+color_macd = input.color(#2962FF, "Línea MACD", group="Colores")
+color_signal = input.color(#FF6D00, "Línea Signal", group="Colores")
+color_hist_positive = input.color(#00BCD4, "Histograma Positivo (Cian)", group="Colores")
+color_hist_negative = input.color(#9C27B0, "Histograma Negativo (Morado)", group="Colores")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CÁLCULOS DEL MACD
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Calcular las EMAs rápida y lenta
+fast_ma = ta.ema(close, fast_length)
+slow_ma = ta.ema(close, slow_length)
+
+// MACD = Diferencia entre EMA rápida y lenta
+macd = fast_ma - slow_ma
+
+// Signal = EMA del MACD
+signal = ta.ema(macd, signal_length)
+
+// Histograma = Diferencia entre MACD y Signal
+histogram = macd - signal
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SEÑALES DE TRADING
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Cruces del MACD con la línea Signal
+bullish_cross = ta.crossover(macd, signal)  // MACD cruza por ENCIMA de Signal = COMPRA
+bearish_cross = ta.crossunder(macd, signal) // MACD cruza por DEBAJO de Signal = VENTA
+
+// Cruces con la línea cero
+zero_cross_up = ta.crossover(macd, 0)      // MACD cruza por encima de cero
+zero_cross_down = ta.crossunder(macd, 0)   // MACD cruza por debajo de cero
+
+// Estado actual
+is_bullish = macd > signal  // MACD por encima de Signal = tendencia alcista
+is_positive = macd > 0      // MACD por encima de cero = momentum alcista
+
+// ════════════════════════════════════════════════════════════════════════════════
+// COLORES DEL HISTOGRAMA
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Color según si es positivo o negativo
+hist_color = histogram >= 0 ? color_hist_positive : color_hist_negative
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PLOTEO
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Plotear el histograma como columnas
+plot(histogram, title="Histograma", style=plot.style_columns, color=hist_color)
+
+// Plotear las líneas MACD y Signal
+plot(macd, title="MACD", color=color_macd, linewidth=2)
+plot(signal, title="Signal", color=color_signal, linewidth=2)
+
+// Línea de cero
+hline(0, "Línea Cero", color=color.gray, linestyle=hline.style_solid)
+
+// Fondo de color según tendencia
+bgcolor(show_background ? (is_bullish ? color.new(color.green, 95) : color.new(color.red, 95)) : na,
+     title="Fondo de Tendencia")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SEÑALES VISUALES
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Señales de compra/venta (cruces MACD/Signal)
+plotshape(show_signals and bullish_cross, "Señal Compra",
+     shape.triangleup, location.bottom, color.new(color.green, 0),
+     size=size.small, text="COMPRA")
+
+plotshape(show_signals and bearish_cross, "Señal Venta",
+     shape.triangledown, location.top, color.new(color.red, 0),
+     size=size.small, text="VENTA")
+
+// Cruces de línea cero (más sutiles)
+plotshape(show_crosses and zero_cross_up, "Cruce Cero ↑",
+     shape.circle, location.bottom, color.new(color.lime, 30),
+     size=size.tiny)
+
+plotshape(show_crosses and zero_cross_down, "Cruce Cero ↓",
+     shape.circle, location.top, color.new(color.maroon, 30),
+     size=size.tiny)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// TABLA DE ESTADO
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_table and barstate.islast
+    // Crear tabla en esquina superior derecha
+    var table status_table = table.new(position.top_right, 2, 5,
+         border_width=1,
+         border_color=color.gray,
+         frame_width=1,
+         frame_color=color.gray)
+
+    // Header
+    table.cell(status_table, 0, 0, "MACD Estado",
+         text_color=color.white,
+         bgcolor=color.new(color.blue, 20),
+         text_size=size.normal)
+    table.merge_cells(status_table, 0, 0, 1, 0)
+
+    // Tendencia
+    trend_text = is_bullish ? "ALCISTA ↑" : "BAJISTA ↓"
+    trend_color = is_bullish ? color.new(color.green, 70) : color.new(color.red, 70)
+
+    table.cell(status_table, 0, 1, "Tendencia",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.normal)
+    table.cell(status_table, 1, 1, trend_text,
+         text_color=color.white,
+         bgcolor=trend_color,
+         text_size=size.normal)
+
+    // Momentum
+    momentum_text = is_positive ? "POSITIVO +" : "NEGATIVO -"
+    momentum_color = is_positive ? color.new(color.green, 70) : color.new(color.red, 70)
+
+    table.cell(status_table, 0, 2, "Momentum",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.normal)
+    table.cell(status_table, 1, 2, momentum_text,
+         text_color=color.white,
+         bgcolor=momentum_color,
+         text_size=size.normal)
+
+    // Valores actuales
+    table.cell(status_table, 0, 3, "MACD",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.small)
+    table.cell(status_table, 1, 3, str.tostring(macd, "#.##"),
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 80),
+         text_size=size.small)
+
+    table.cell(status_table, 0, 4, "Histograma",
+         text_color=color.white,
+         bgcolor=color.new(color.gray, 50),
+         text_size=size.small)
+    table.cell(status_table, 1, 4, str.tostring(histogram, "#.##"),
+         text_color=color.white,
+         bgcolor=hist_color,
+         text_size=size.small)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ALERTAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+alertcondition(enable_alerts and bullish_cross,
+     "MACD Señal de Compra",
+     "🟢 COMPRA: MACD cruzó por encima de Signal")
+
+alertcondition(enable_alerts and bearish_cross,
+     "MACD Señal de Venta",
+     "🔴 VENTA: MACD cruzó por debajo de Signal")
+
+alertcondition(enable_alerts and zero_cross_up,
+     "MACD Cruce Cero Alcista",
+     "📈 MACD cruzó por encima de cero - Momentum positivo")
+
+alertcondition(enable_alerts and zero_cross_down,
+     "MACD Cruce Cero Bajista",
+     "📉 MACD cruzó por debajo de cero - Momentum negativo")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// GUÍA DE USO
+// ════════════════════════════════════════════════════════════════════════════════
+
+// CÓMO INTERPRETAR EL MACD SIMPLE:
+//
+// 1. HISTOGRAMA (Barras de colores):
+//    - Cian (Azul claro): MACD está por encima de Signal (alcista)
+//    - Morado: MACD está por debajo de Signal (bajista)
+//    - Cuanto más alto el histograma, más fuerte la señal
+//    - Colores distintos a las velas para evitar confusión
+//
+// 2. LÍNEAS:
+//    - Línea Azul (MACD): Mide el momentum del precio
+//    - Línea Naranja (Signal): Promedio del MACD
+//    - Cuando MACD cruza Signal = cambio de tendencia
+//
+// 3. SEÑALES DE TRADING:
+//    - ▲ COMPRA (verde): MACD cruzó por encima de Signal
+//      → Posible inicio de tendencia alcista
+//
+//    - ▼ VENTA (rojo): MACD cruzó por debajo de Signal
+//      → Posible inicio de tendencia bajista
+//
+// 4. LÍNEA CERO:
+//    - MACD por encima de 0 = Momentum positivo (alcista)
+//    - MACD por debajo de 0 = Momentum negativo (bajista)
+//    - Círculos pequeños marcan cuando cruza el cero
+//
+// 5. TABLA DE ESTADO:
+//    - Tendencia: Relación MACD vs Signal
+//    - Momentum: Posición de MACD respecto a cero
+//    - Valores numéricos actuales
+//
+// 6. MEJORES PRÁCTICAS:
+//    ✓ Usa señales de compra cuando MACD está por encima de cero (más fuerte)
+//    ✓ Usa señales de venta cuando MACD está por debajo de cero (más fuerte)
+//    ✓ Combina con análisis de tendencia del precio
+//    ✓ Histograma creciente = momentum aumentando
+//    ✓ Histograma decreciente = momentum debilitándose
+//
+// 7. EJEMPLO DE TRADING:
+//    COMPRA: Señal de compra (▲) + MACD > 0 + Precio en tendencia alcista
+//    VENTA: Señal de venta (▼) + MACD < 0 + Precio en tendencia bajista
+//
+// 8. PARÁMETROS ESTÁNDAR (12, 26, 9):
+//    - Estos son los valores más usados por traders profesionales
+//    - Funcionan bien en la mayoría de mercados y timeframes
+//    - Puedes ajustarlos según tu estilo de trading:
+//      * Valores más bajos = Más señales, más sensible
+//      * Valores más altos = Menos señales, más confiables
