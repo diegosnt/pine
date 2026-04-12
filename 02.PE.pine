@@ -1,0 +1,57 @@
+//@version=6
+indicator("Price-to-Earnings Ratio (P/E)", shorttitle="P/E", overlay=false)
+
+// ─── INPUTS ───────────────────────────────────────────────────────────────────
+s_in = input.string("Auto", "Sector", options=["Auto", "Tecnologia", "Bancos", "General", "Custom"])
+c_l = input.float(15.0, "Min P/E")
+c_h = input.float(30.0, "Max P/E")
+s_tab = input.bool(true, "Table")
+
+// ─── DATA ─────────────────────────────────────────────────────────────────────
+eps = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE", "TTM", ignore_invalid_symbol=true)
+pe = eps > 0 ? close / eps : na
+
+// ─── SECTOR ───────────────────────────────────────────────────────────────────
+auto_sec = "General"
+if syminfo.sector == "Technology Services" or syminfo.sector == "Electronic Technology"
+    auto_sec := "Tecnologia"
+else if syminfo.sector == "Finance" or syminfo.sector == "Energy Minerals" or syminfo.sector == "Utilities"
+    auto_sec := "Bancos"
+
+sec = s_in == "Auto" ? auto_sec : s_in
+
+// ─── RANGOS ───────────────────────────────────────────────────────────────────
+r_l = 15.0
+r_h = 25.0
+
+if sec == "Tecnologia"
+    r_l := 25.0
+    r_h := 35.0
+else if sec == "Bancos"
+    r_l := 8.0
+    r_h := 12.0
+else if sec == "Custom"
+    r_l := c_l
+    r_h := c_h
+
+// ─── VISUALS ──────────────────────────────────────────────────────────────────
+c_pe = na(pe) ? color.gray : pe < r_l ? color.green : pe <= r_h ? color.orange : color.red
+
+plot(r_l, "Min", color=color.new(color.green, 40))
+plot(r_h, "Max", color=color.new(color.red, 40))
+plot(pe, "P/E", color=c_pe, linewidth=3)
+hline(0, "Cero")
+
+// ─── TABLE ────────────────────────────────────────────────────────────────────
+if s_tab and barstate.islast
+    t = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 75))
+    table.cell(t, 0, 0, "P/E Ratio", bgcolor=color.blue, text_color=color.white)
+    table.cell(t, 1, 0, str.tostring(pe, "#.##"), text_color=c_pe)
+    table.cell(t, 0, 1, "Sector", bgcolor=color.blue, text_color=color.white)
+    table.cell(t, 1, 1, sec, text_color=color.yellow)
+    table.cell(t, 0, 2, "Ref", bgcolor=color.blue, text_color=color.white)
+    table.cell(t, 1, 2, str.tostring(r_l) + " – " + str.tostring(r_h), text_color=color.green)
+    table.cell(t, 0, 3, "EPS", bgcolor=color.blue, text_color=color.white)
+    table.cell(t, 1, 3, str.tostring(eps, "#.####"))
+    table.cell(t, 0, 4, "Status", bgcolor=color.blue, text_color=color.white)
+    table.cell(t, 1, 4, pe < r_l ? "Barato" : pe <= r_h ? "Justo" : "Caro", text_color=c_pe)

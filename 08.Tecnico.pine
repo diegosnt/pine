@@ -1,0 +1,153 @@
+//@version=6
+indicator("Super Indicator Suite (Fundamental + Technical)", shorttitle="SuperSuite", overlay=true, precision=2)
+
+// ==========================================
+// ─── CONFIGURACIÓN E INPUTS ───
+// ==========================================
+grp_f = "─── ANÁLISIS FUNDAMENTAL ───"
+s_in = input.string("Auto", "Sector de Referencia", options=["Auto", "Tecnologia", "Bancos", "General"], group=grp_f)
+show_f_panel = input.bool(true, "Mostrar Panel Fundamental", group=grp_f)
+
+grp_t = "─── ANÁLISIS TÉCNICO ───"
+rsi_len = input.int(14, "RSI Length", minval=1, group=grp_t)
+wma_len = input.int(10, "WMA Corto (Barras)", minval=1, group=grp_t)
+ema_mid = input.int(150, "EMA Media", minval=1, group=grp_t)
+ema_long = input.int(200, "EMA Larga", minval=1, group=grp_t)
+show_t_panel = input.bool(true, "Mostrar Panel Técnico", group=grp_t)
+
+// ==========================================
+// ─── 1. CÁLCULOS TÉCNICOS (MOMENTUM & TREND) ───
+// ==========================================
+rsi_v  = ta.rsi(close, rsi_len)
+wma_v  = ta.wma(close, wma_len)
+ema_m  = ta.ema(close, ema_mid)
+ema_l  = ta.ema(close, ema_long)
+[macd_l, signal_l, hist] = ta.macd(close, 12, 26, 9)
+
+// Señales y Cruces
+macd_turn_up = hist > hist[1] and hist[1] < hist[2] and hist < 0
+cross_up = ta.crossover(close, ema_l)
+cross_dn = ta.crossunder(close, ema_l)
+
+// Proxy Concorde (MFI)
+mfi_v = ta.mfi(close, 14)
+institucional = mfi_v > 80 ? "Acumulando" : mfi_v < 20 ? "Suelo (Mar)" : "Neutral"
+
+// ==========================================
+// ─── 2. OBTENCIÓN DE DATOS FUNDAMENTALES ───
+// ==========================================
+f_ttm(id) => request.financial(syminfo.tickerid, id, "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+f_fy(id)  => request.financial(syminfo.tickerid, id, "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+
+// P/E
+eps_r = f_ttm("EARNINGS_PER_SHARE")
+eps = not na(eps_r) ? eps_r : f_fy("EARNINGS_PER_SHARE")
+pe = eps > 0 ? close / eps : na
+
+// EV / EBITDA
+ev_r = f_ttm("ENTERPRISE_VALUE")
+ev = not na(ev_r) ? ev_r : f_fy("ENTERPRISE_VALUE")
+eb_r = f_ttm("EBITDA")
+eb = not na(eb_r) ? eb_r : f_fy("EBITDA")
+ev_eb = eb > 0 ? ev / eb : na
+
+// Margen Operativo
+oi_r = f_ttm("OPERATING_INCOME")
+oi = not na(oi_r) ? oi_r : f_fy("OPERATING_INCOME")
+rv_r = f_ttm("TOTAL_REVENUE")
+rv = not na(rv_r) ? rv_r : f_fy("TOTAL_REVENUE")
+mo = (rv != 0 and not na(oi) and not na(rv)) ? (oi / rv) * 100 : na
+
+// Deuda / EBITDA
+nd_r = f_ttm("NET_DEBT")
+nd = not na(nd_r) ? nd_r : f_fy("NET_DEBT")
+de_eb = (eb > 0 and not na(nd)) ? nd / eb : na
+
+// ROIC
+ro_r = f_ttm("RETURN_ON_INVESTED_CAPITAL")
+roic = not na(ro_r) ? ro_r : f_fy("RETURN_ON_INVESTED_CAPITAL")
+
+// ==========================================
+// ─── 3. LÓGICA DE SECTOR Y SEMÁFOROS ───
+// ==========================================
+is_t = syminfo.sector == "Technology Services" or syminfo.sector == "Electronic Technology"
+is_b = syminfo.sector == "Finance" or syminfo.sector == "Energy Minerals" or syminfo.sector == "Utilities"
+auto_s = is_t ? "Tecnologia" : is_b ? "Bancos" : "General"
+sec = s_in == "Auto" ? auto_s : s_in
+
+// Colores
+pe_c = na(pe) ? color.gray : pe < (sec == "Tecnologia" ? 25 : sec == "Bancos" ? 8 : 15) ? color.green : pe <= (sec == "Tecnologia" ? 35 : sec == "Bancos" ? 12 : 25) ? color.orange : color.red
+ee_c = na(ev_eb) ? color.gray : ev_eb < (sec == "Tecnologia" ? 12 : sec == "Bancos" ? 6 : 10) ? color.green : ev_eb <= (sec == "Tecnologia" ? 22 : sec == "Bancos" ? 10 : 15) ? color.orange : color.red
+mo_c = na(mo) ? color.gray : mo >= (sec == "Tecnologia" ? 40 : sec == "Bancos" ? 30 : 12) ? color.green : mo >= (sec == "Tecnologia" ? 20 : sec == "Bancos" ? 15 : 4) ? color.orange : color.red
+de_c = na(de_eb) ? color.gray : de_eb < 2.0 ? color.green : de_eb <= 4.0 ? color.orange : color.red
+ro_c = na(roic) ? color.gray : roic >= 25.0 ? color.green : roic >= 10.0 ? color.orange : color.red
+
+// ==========================================
+// ─── 4. VISUALIZACIÓN EN GRÁFICO ───
+// ==========================================
+plot(wma_v, "WMA 10", color=color.yellow, linewidth=2)
+plot(ema_m, "EMA 150", color=color.new(color.orange, 40))
+plot(ema_l, "EMA 200", color=color.new(color.red, 30), linewidth=2)
+
+plotshape(macd_turn_up, "MACD Giro", shape.triangleup, location.belowbar, color.green, size=size.tiny)
+plotshape(rsi_v < 30, "RSI Compra", shape.labelup, location.belowbar, color.blue, text="COMPRA", textcolor=color.white, size=size.small)
+plotshape(rsi_v > 70, "RSI Cautela", shape.labeldown, location.abovebar, color.red, text="CAUTELA", textcolor=color.white, size=size.small)
+
+// ==========================================
+// ─── 5. PANELES DASHBOARD (TABLAS) ───
+// ==========================================
+// --- PANEL FUNDAMENTAL (DERECHA) ---
+if show_f_panel and barstate.islast
+    var table tf = table.new(position.middle_right, 3, 7, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
+    h_f = color.new(color.blue, 40)
+    table.cell(tf, 0, 0, "Métrica Fundamental", bgcolor=color.new(color.gray, 20), text_color=color.white, text_size=size.small)
+    table.cell(tf, 1, 0, "Valor", bgcolor=color.new(color.gray, 20), text_color=color.white, text_size=size.small)
+    table.cell(tf, 2, 0, "St.", bgcolor=color.new(color.gray, 20), text_color=color.white, text_size=size.small)
+    
+    // Fila 1 - PE
+    table.cell(tf, 0, 1, "P/E Ratio", bgcolor=h_f, text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    table.cell(tf, 1, 1, na(pe) ? "N/D" : str.tostring(pe, "#.#"), text_color=color.white, text_size=size.small)
+    table.cell(tf, 2, 1, "●", text_color=pe_c, text_size=size.large)
+    // Fila 2 - EV
+    table.cell(tf, 0, 2, "EV / EBITDA", bgcolor=h_f, text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    table.cell(tf, 1, 2, na(ev_eb) ? "N/D" : str.tostring(ev_eb, "#.#"), text_color=color.white, text_size=size.small)
+    table.cell(tf, 2, 2, "●", text_color=ee_c, text_size=size.large)
+    // Fila 3 - Margen
+    table.cell(tf, 0, 3, "Margen Op.", bgcolor=h_f, text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    table.cell(tf, 1, 3, na(mo) ? "N/D" : str.tostring(mo, "#.#") + "%", text_color=color.white, text_size=size.small)
+    table.cell(tf, 2, 3, "●", text_color=mo_c, text_size=size.large)
+    // Fila 4 - Deuda
+    table.cell(tf, 0, 4, "Deuda / EBITDA", bgcolor=h_f, text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    table.cell(tf, 1, 4, na(de_eb) ? "N/D" : str.tostring(de_eb, "#.#"), text_color=color.white, text_size=size.small)
+    table.cell(tf, 2, 4, "●", text_color=de_c, text_size=size.large)
+    // Fila 5 - ROIC
+    table.cell(tf, 0, 5, "ROIC", bgcolor=h_f, text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    table.cell(tf, 1, 5, na(roic) ? "N/D" : str.tostring(roic, "#.#") + "%", text_color=color.white, text_size=size.small)
+    table.cell(tf, 2, 5, "●", text_color=ro_c, text_size=size.large)
+    
+    if timeframe.isintraday
+        table.cell(tf, 0, 6, "USAR EN DIARIO (D)", bgcolor=color.red, text_color=color.white, text_size=size.tiny)
+        table.merge_cells(tf, 0, 6, 2, 6)
+
+// --- PANEL TÉCNICO (IZQUIERDA) ---
+if show_t_panel and barstate.islast
+    var table tt = table.new(position.middle_left, 2, 6, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
+    h_t = color.new(color.purple, 40)
+    table.cell(tt, 0, 0, "Check Técnico", bgcolor=color.new(color.gray, 20), text_color=color.white, text_size=size.small)
+    table.cell(tt, 1, 0, "Estado", bgcolor=color.new(color.gray, 20), text_color=color.white, text_size=size.small)
+
+    table.cell(tt, 0, 1, "RSI (Sentiment)", bgcolor=h_t, text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    table.cell(tt, 1, 1, str.tostring(rsi_v, "#.#"), text_color=rsi_v < 35 ? color.green : rsi_v > 65 ? color.red : color.white, text_size=size.small)
+
+    table.cell(tt, 0, 2, "Tendencia L/P", bgcolor=h_t, text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    table.cell(tt, 1, 2, close > ema_l ? "BULLISH" : "BEARISH", text_color=close > ema_l ? color.green : color.red, text_size=size.small)
+
+    table.cell(tt, 0, 3, "Momentum", bgcolor=h_t, text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    table.cell(tt, 1, 3, hist > 0 ? "Fuerza +" : "Fuerza -", text_color=hist > 0 ? color.green : color.red, text_size=size.small)
+
+    table.cell(tt, 0, 4, "Manos Grandes", bgcolor=h_t, text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    table.cell(tt, 1, 4, institucional, text_color=institucional == "Suelo (Mar)" ? color.blue : color.white, text_size=size.small)
+
+    ema_msg = cross_up ? "¡CRUCE ALCISTA!" : cross_dn ? "¡CRUCE BAJISTA!" : (close > ema_l ? "Soporte EMA 200" : "Resistencia EMA 200")
+    table.cell(tt, 0, 5, "Alerta EMA 200", bgcolor=color.new(color.teal, 50), text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    table.cell(tt, 1, 5, ema_msg, text_color=color.white, text_size=size.small)

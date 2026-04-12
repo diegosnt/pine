@@ -1,0 +1,71 @@
+//@version=6
+indicator("Super Indicador Técnico (SuperIndica2)", shorttitle="SuperIndica2", overlay=true)
+
+// ─── INPUTS ───────────────────────────────────────────────────────────────────
+rsi_len = input.int(14, "RSI Length", minval=1)
+rsi_ob  = input.int(70, "Sobrecompra", minval=50)
+rsi_os  = input.int(30, "Sobreventa", maxval=50)
+
+wma_len = input.int(10,  "WMA 10 (Barras)", minval=1)
+ema1_len = input.int(150, "EMA 150", minval=1)
+ema2_len = input.int(200, "EMA 200", minval=1)
+
+// ─── CÁLCULOS (NIVEL GLOBAL) ──────────────────────────────────────────────────
+// 1. RSI
+rsi_v = ta.rsi(close, rsi_len)
+
+// 2. Medias Móviles
+wma_v  = ta.wma(close, wma_len)
+ema1_v = ta.ema(close, ema1_len)
+ema2_v = ta.ema(close, ema2_len)
+
+// 3. MACD
+[macd_line, signal_line, hist] = ta.macd(close, 12, 26, 9)
+macd_turn_up = hist > hist[1] and hist[1] < hist[2] and hist < 0
+
+// 4. Cruces (Extraídos a nivel global para consistencia)
+cross_up = ta.crossover(close, ema2_v)
+cross_dn = ta.crossunder(close, ema2_v)
+
+// 5. Concorde Proxy (MFI)
+mfi_v = ta.mfi(close, 14)
+institucional = mfi_v > 80 ? "Acumulando" : mfi_v < 20 ? "Debajo del Mar" : "Neutral"
+
+// ─── VISUALIZACIÓN ────────────────────────────────────────────────────────────
+plot(wma_v,  "WMA 10",  color=color.yellow, linewidth=2)
+plot(ema1_v, "EMA 150", color=color.new(color.orange, 30), linewidth=1)
+plot(ema2_v, "EMA 200", color=color.new(color.red, 30),    linewidth=2)
+
+// Formas Corregidas (Pine Script v6)
+plotshape(macd_turn_up, "MACD Turn Up", shape.triangleup, location.belowbar, color.green, size=size.tiny)
+plotshape(rsi_v < rsi_os, "RSI Buy",     shape.labelup,   location.belowbar, color.blue, text="COMPRA", textcolor=color.white, size=size.small)
+plotshape(rsi_v > rsi_ob, "RSI Cautela", shape.labeldown, location.abovebar, color.red,  text="CAUTELA", textcolor=color.white, size=size.small)
+
+// ─── PANEL TÉCNICO ────────────────────────────────────────────────────────────
+if barstate.islast
+    var table t = table.new(position.middle_left, 2, 6, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
+    h_bg = color.new(color.blue, 40)
+    
+    // RSI
+    rsi_c = rsi_v < rsi_os ? color.green : rsi_v > rsi_ob ? color.red : color.white
+    table.cell(t, 0, 1, "RSI", bgcolor=h_bg, text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    table.cell(t, 1, 1, str.tostring(rsi_v, "#.##"), text_color=rsi_c, text_size=size.small)
+
+    // Tendencia
+    trend_c = close > wma_v and close > ema2_v ? color.green : close < ema2_v ? color.red : color.orange
+    table.cell(t, 0, 2, "Tendencia", bgcolor=h_bg, text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    table.cell(t, 1, 2, close > wma_v ? "Alcista" : "Bajista", text_color=trend_c, text_size=size.small)
+
+    // MACD
+    table.cell(t, 0, 3, "MACD (Hist)", bgcolor=h_bg, text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    table.cell(t, 1, 3, hist > 0 ? "Fuerza +" : "Fuerza -", text_color=hist > 0 ? color.green : color.red, text_size=size.small)
+
+    // Concorde
+    table.cell(t, 0, 4, "Concorde", bgcolor=h_bg, text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    table.cell(t, 1, 4, institucional, text_color=institucional == "Debajo del Mar" ? color.blue : color.white, text_size=size.small)
+
+    // Alertas de Posición respecto a EMA 200
+    alert_txt = cross_up ? "¡CRUCE ALCISTA HOY!" : cross_dn ? "¡CRUCE BAJISTA HOY!" : (close > ema2_v ? "Sobre EMA 200 (Bull)" : "Bajo EMA 200 (Bear)")
+    alert_bg  = cross_up ? color.green : cross_dn ? color.red : color.new(color.teal, 50)
+    table.cell(t, 0, 5, "Fondo (EMA 200)", bgcolor=alert_bg, text_color=color.white, text_halign=text.align_left, text_size=size.small)
+    table.cell(t, 1, 5, alert_txt, text_color=color.white, text_size=size.small)

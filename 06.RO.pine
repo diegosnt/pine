@@ -1,0 +1,68 @@
+//@version=6
+indicator("Return on Invested Capital (ROIC)", shorttitle="ROIC", overlay=false, precision=2)
+
+// ─── INPUTS ───────────────────────────────────────────────────────────────────
+s_in = input.string("Auto", "Sector", options=["Auto", "Tecnologia", "Bancos", "General", "Custom"])
+c_l = input.float(10.0, "Piso Aceptable (%)")
+c_h = input.float(25.0, "Excelente (%)")
+s_tab = input.bool(true, "Mostrar Tabla")
+
+// ─── DATA (CON AUTO-RELLENO DE HUECOS) ────────────────────────────────────────
+// El ROIC ya viene precalculado en TradingView (TTM y FY)
+roic_ttm = request.financial(syminfo.tickerid, "RETURN_ON_INVESTED_CAPITAL", "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+roic_fy  = request.financial(syminfo.tickerid, "RETURN_ON_INVESTED_CAPITAL", "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+
+// Consolidamos
+roic = not na(roic_ttm) ? roic_ttm : roic_fy
+
+// ─── SECTOR Y RANGOS ──────────────────────────────────────────────────────────
+is_tech = syminfo.sector == "Technology Services" or syminfo.sector == "Electronic Technology"
+auto_sec = is_tech ? "Tecnologia" : "General"
+sec = s_in == "Auto" ? auto_sec : s_in
+
+// Umbrales sugeridos: < 10% Malo/Alerta, 10-25% Bueno, > 25% Excelente
+r_l = sec == "Custom" ? c_l : 10.0
+r_h = sec == "Custom" ? c_h : 25.0
+
+// ─── VISUALS ──────────────────────────────────────────────────────────────────
+c_roic = na(roic) ? color.gray : roic >= r_h ? color.green : roic >= r_l ? color.orange : color.red
+
+plot(r_l, "Piso (Costo Cap)", color=color.new(color.orange, 50), style=plot.style_stepline)
+plot(r_h, "Excelencia",      color=color.new(color.green, 50),  style=plot.style_stepline)
+plot(roic, "ROIC (%)",       color=c_roic, linewidth=3,         style=plot.style_stepline)
+
+fill(plot(r_l, display=display.none), plot(r_h, display=display.none), color=color.new(color.orange, 92))
+hline(0, "Cero", color=color.gray, linestyle=hline.style_dotted)
+
+// ─── TABLA INFORMATIVA ────────────────────────────────────────────────────────
+if s_tab and barstate.islast
+    var table t = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 75), border_width=1, border_color=color.gray)
+    h_bg = color.new(color.orange, 40)
+    
+    // Fila 0 - ROIC
+    table.cell(t, 0, 0, "ROIC", bgcolor=h_bg, text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 0, na(roic) ? "N/D" : str.tostring(roic, "#.##") + "%", text_color=c_roic, text_size=size.small)
+    
+    // Fila 1 - Estado
+    status = na(roic) ? "N/D" : roic >= r_h ? "EXCELENTE" : roic >= r_l ? "Creando Valor" : "Destruyendo Valor"
+    table.cell(t, 0, 1, "Estado", bgcolor=h_bg, text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 1, status, text_color=c_roic, text_size=size.small)
+    
+    // Fila 2 - Referencia
+    table.cell(t, 0, 2, "Umbral Min.", bgcolor=h_bg, text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 2, str.tostring(r_l) + "%", text_color=color.white, text_size=size.small)
+    
+    // Fila 3 - Sector
+    table.cell(t, 0, 3, "Sector", bgcolor=h_bg, text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 3, sec, text_color=color.yellow, text_size=size.small)
+
+    // Fila 4 - Eficiencia
+    ef_text = na(roic) ? "N/D" : roic > 20 ? "Alta" : roic > 10 ? "Media" : "Baja"
+    table.cell(t, 0, 4, "Eficiencia", bgcolor=h_bg, text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 4, ef_text, text_color=color.white, text_size=size.small)
+
+    // Fila 5 - Diagnóstico de Temporalidad
+    tf_c = timeframe.isintraday ? color.red : color.green
+    tf_t = timeframe.isintraday ? "USAR DIARIO (D)" : "OK (" + timeframe.period + ")"
+    table.cell(t, 0, 5, "Gráfico", bgcolor=h_bg, text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 5, tf_t, text_color=tf_c, text_size=size.small)

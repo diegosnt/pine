@@ -1,0 +1,99 @@
+//@version=6
+indicator("Super Indicador Fundamental (SuperIntica)", shorttitle="SuperIntica", overlay=true)
+
+// ─── INPUTS ───────────────────────────────────────────────────────────────────
+s_in = input.string("Auto", "Sector", options=["Auto", "Tecnologia", "Bancos", "General"])
+show_panel = input.bool(true, "Mostrar Panel")
+
+// ─── 1. DATOS (GLOBAL SCOPE) ──────────────────────────────────────────────────
+// P/E
+eps_ttm = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE", "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+eps_fy  = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE", "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+eps = not na(eps_ttm) ? eps_ttm : eps_fy
+pe = eps > 0 ? close / eps : na
+
+// EV / EBITDA
+ev_ttm = request.financial(syminfo.tickerid, "ENTERPRISE_VALUE", "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+ev_fy  = request.financial(syminfo.tickerid, "ENTERPRISE_VALUE", "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+ev = not na(ev_ttm) ? ev_ttm : ev_fy
+
+eb_ttm = request.financial(syminfo.tickerid, "EBITDA", "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+eb_fy  = request.financial(syminfo.tickerid, "EBITDA", "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+eb = not na(eb_ttm) ? eb_ttm : eb_fy
+ev_eb = eb > 0 ? ev / eb : na
+
+// Margen Operativo
+oi_ttm = request.financial(syminfo.tickerid, "OPERATING_INCOME", "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+oi_fy  = request.financial(syminfo.tickerid, "OPERATING_INCOME", "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+oi = not na(oi_ttm) ? oi_ttm : oi_fy
+
+rv_ttm = request.financial(syminfo.tickerid, "TOTAL_REVENUE", "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+rv_fy  = request.financial(syminfo.tickerid, "TOTAL_REVENUE", "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+rv = not na(rv_ttm) ? rv_ttm : rv_fy
+mo = (rv != 0 and not na(oi) and not na(rv)) ? (oi / rv) * 100 : na
+
+// Deuda / EBITDA
+nd_ttm = request.financial(syminfo.tickerid, "NET_DEBT", "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+nd_fy  = request.financial(syminfo.tickerid, "NET_DEBT", "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+nd = not na(nd_ttm) ? nd_ttm : nd_fy
+de_eb = (eb > 0 and not na(nd)) ? nd / eb : na
+
+// ROIC
+ro_ttm = request.financial(syminfo.tickerid, "RETURN_ON_INVESTED_CAPITAL", "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+ro_fy  = request.financial(syminfo.tickerid, "RETURN_ON_INVESTED_CAPITAL", "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+roic = not na(ro_ttm) ? ro_ttm : ro_fy
+
+// ─── 2. LÓGICA DE COLORES ─────────────────────────────────────────────────────
+is_t = syminfo.sector == "Technology Services" or syminfo.sector == "Electronic Technology"
+is_b = syminfo.sector == "Finance" or syminfo.sector == "Energy Minerals" or syminfo.sector == "Utilities"
+auto_s = is_t ? "Tecnologia" : is_b ? "Bancos" : "General"
+sec = s_in == "Auto" ? auto_s : s_in
+
+pe_c = na(pe) ? color.gray : pe < (sec == "Tecnologia" ? 25 : sec == "Bancos" ? 8 : 15) ? color.green : pe <= (sec == "Tecnologia" ? 35 : sec == "Bancos" ? 12 : 25) ? color.orange : color.red
+ee_c = na(ev_eb) ? color.gray : ev_eb < (sec == "Tecnologia" ? 12 : sec == "Bancos" ? 6 : 10) ? color.green : ev_eb <= (sec == "Tecnologia" ? 22 : sec == "Bancos" ? 10 : 15) ? color.orange : color.red
+mo_c = na(mo) ? color.gray : mo >= (sec == "Tecnologia" ? 40 : sec == "Bancos" ? 30 : 12) ? color.green : mo >= (sec == "Tecnologia" ? 20 : sec == "Bancos" ? 15 : 4) ? color.orange : color.red
+de_c = na(de_eb) ? color.gray : de_eb < 2.0 ? color.green : de_eb <= 4.0 ? color.orange : color.red
+ro_c = na(roic) ? color.gray : roic >= 25.0 ? color.green : roic >= 10.0 ? color.orange : color.red
+
+// ─── 3. PANEL (TABLA) ────────────────────────────────────────────────────────
+if show_panel and barstate.islast
+    var table t = table.new(position.top_right, 3, 8, bgcolor=color.new(color.black, 70), border_width=1, border_color=color.gray)
+    h_bg = color.new(color.blue, 40)
+    
+    // Encabezado
+    table.cell(t, 0, 0, "Métrica Fundamental", bgcolor=color.new(color.gray, 20), text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 0, "Valor", bgcolor=color.new(color.gray, 20), text_color=color.white, text_size=size.small)
+    table.cell(t, 2, 0, "Semáf.", bgcolor=color.new(color.gray, 20), text_color=color.white, text_size=size.small)
+
+    // Price-to-Earnings
+    table.cell(t, 0, 1, "P/E Ratio", bgcolor=h_bg, text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 1, na(pe) ? "N/D" : str.tostring(pe, "#.##"), text_color=color.white, text_size=size.small)
+    table.cell(t, 2, 1, " ● ", text_color=pe_c, text_size=size.large)
+
+    // EV/EBITDA
+    table.cell(t, 0, 2, "EV / EBITDA", bgcolor=h_bg, text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 2, na(ev_eb) ? "N/D" : str.tostring(ev_eb, "#.##"), text_color=color.white, text_size=size.small)
+    table.cell(t, 2, 2, " ● ", text_color=ee_c, text_size=size.large)
+
+    // Margen Operativo
+    table.cell(t, 0, 3, "Margen Op.", bgcolor=h_bg, text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 3, na(mo) ? "N/D" : str.tostring(mo, "#.##") + "%", text_color=color.white, text_size=size.small)
+    table.cell(t, 2, 3, " ● ", text_color=mo_c, text_size=size.large)
+
+    // Deuda / EBITDA
+    table.cell(t, 0, 4, "Deuda / EBITDA", bgcolor=h_bg, text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 4, na(de_eb) ? "N/D" : str.tostring(de_eb, "#.##"), text_color=color.white, text_size=size.small)
+    table.cell(t, 2, 4, " ● ", text_color=de_c, text_size=size.large)
+
+    // ROIC
+    table.cell(t, 0, 5, "ROIC", bgcolor=h_bg, text_color=color.white, text_size=size.small)
+    table.cell(t, 1, 5, na(roic) ? "N/D" : str.tostring(roic, "#.##") + "%", text_color=color.white, text_size=size.small)
+    table.cell(t, 2, 5, " ● ", text_color=ro_c, text_size=size.large)
+
+    // Footer
+    table.cell(t, 0, 6, "Sector: " + sec, bgcolor=color.new(color.teal, 50), text_color=color.white, text_size=size.tiny)
+    table.merge_cells(t, 0, 6, 2, 6)
+    
+    if timeframe.isintraday
+        table.cell(t, 0, 7, "USAR EN DIARIO (D)", bgcolor=color.new(color.red, 40), text_color=color.white, text_size=size.tiny)
+        table.merge_cells(t, 0, 7, 2, 7)
