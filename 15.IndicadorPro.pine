@@ -1,0 +1,1049 @@
+//@version=6
+//© Diego Santacruz
+indicator(title="IndicadorPro v5 — Confluencia + Premarket + Fundamental + Señal Maestra + Divergencias + Riesgo ATR", shorttitle="IndicadorPro v5", overlay=true, max_lines_count=200, max_labels_count=200)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CONFIGURACIÓN - CONFLUENCIA
+// ════════════════════════════════════════════════════════════════════════════════
+
+min_confluence    = input.int(4, "Confluencia Mínima (de 6)", minval=3, maxval=6, group="Sistema", tooltip="Mínimo 4/6 recomendado para mayor precisión")
+min_score         = input.int(70, "Score Mínimo (%)", minval=60, maxval=90, group="Sistema", tooltip="Score mínimo para señales fuertes (70% recomendado)")
+show_weak_signals = input.bool(false, "Mostrar Señales Débiles", group="Sistema")
+
+enable_trend_filter  = input.bool(true, "Filtro de Tendencia", group="Filtros")
+enable_volume_filter = input.bool(true, "Filtro de Volumen", group="Filtros")
+min_bars_between     = input.int(5, "Barras Entre Señales", minval=1, maxval=20, group="Filtros")
+
+show_signals    = input.bool(true, "Mostrar Señales", group="Visualización")
+show_indicators = input.bool(true, "Mostrar Indicadores en Chart", group="Visualización")
+show_table      = input.bool(true, "Mostrar Tabla de Confluencia", group="Visualización")
+
+enable_alerts = input.bool(true, "Activar Alertas", group="Alertas")
+
+ema_fast    = input.int(20,  "EMA Rápida",    minval=1, group="Parámetros")
+ema_slow    = input.int(50,  "EMA Lenta",     minval=1, group="Parámetros")
+ema_trend   = input.int(200, "EMA Tendencia", minval=1, group="Parámetros")
+asl_length  = input.int(21,  "ASL Length",   minval=1, group="Parámetros")
+rsi_length  = input.int(14,  "RSI Length",   minval=1, group="Parámetros")
+macd_fast   = input.int(12,  "MACD Fast",    minval=1, group="Parámetros")
+macd_slow   = input.int(26,  "MACD Slow",    minval=1, group="Parámetros")
+macd_signal = input.int(9,   "MACD Signal",  minval=1, group="Parámetros")
+
+color_asl   = input.color(#00FF00, "ASL 21",            group="Colores")
+color_fast  = input.color(#2196F3, "EMA Rápida (20)",   group="Colores")
+color_slow  = input.color(#FF9800, "EMA Lenta (50)",    group="Colores")
+color_trend = input.color(#9C27B0, "EMA Tendencia (200)", group="Colores")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CONFIGURACIÓN - PREMARKET SCANNER
+// ════════════════════════════════════════════════════════════════════════════════
+
+threshold_moderate = input.float(2.0,  "Umbral Moderado (%)", minval=0, step=0.5, group="Premarket - Umbrales")
+threshold_strong   = input.float(5.0,  "Umbral Fuerte (%)",   minval=0, step=0.5, group="Premarket - Umbrales")
+threshold_extreme  = input.float(10.0, "Umbral Extremo (%)",  minval=0, step=0.5, group="Premarket - Umbrales")
+
+enable_volume_scoring = input.bool(true, "Incluir Volumen en Score", group="Premarket - Scoring")
+vol_weight            = input.float(30, "Peso del Volumen (%)", minval=0, maxval=50, step=5, group="Premarket - Scoring")
+
+show_pm_table     = input.bool(true, "Mostrar Dashboard Premarket", group="Premarket - Visualización")
+pm_table_position = input.string("middle_left", "Posición Dashboard PM", options=["top_left", "middle_left", "bottom_left"], group="Premarket - Visualización")
+show_gauge        = input.bool(true, "Mostrar Medidor de Intensidad", group="Premarket - Visualización")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CONFIGURACIÓN - PANEL FUNDAMENTAL
+// ════════════════════════════════════════════════════════════════════════════════
+
+s_in         = input.string("Auto", "Sector", options=["Auto", "Tecnologia", "Bancos", "General"], group="Fundamental")
+show_panel   = input.bool(true, "Mostrar Panel Fundamental", group="Fundamental")
+fund_min_buy = input.int(3, "Mínimo señales para COMPRA (de 5)", minval=2, maxval=5, group="Fundamental")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CONFIGURACIÓN - SEÑAL MAESTRA
+// ════════════════════════════════════════════════════════════════════════════════
+
+show_master_table = input.bool(true, "Mostrar Panel Señal Maestra", group="Señal Maestra")
+show_master_label = input.bool(true, "Label en gráfico (Confluencia Total)", group="Señal Maestra")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CONFIGURACIÓN - DIVERGENCIAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+div_pivot_len  = input.int(5, "Sensibilidad de Pivotes", minval=2, maxval=10, group="Divergencias", tooltip="Barras a cada lado para confirmar un pivote. Más alto = menos señales, más confiables")
+show_div_rsi   = input.bool(true, "Mostrar Divergencias RSI",       group="Divergencias")
+show_div_macd  = input.bool(true, "Mostrar Divergencias MACD",      group="Divergencias")
+show_div_lines = input.bool(true, "Trazar líneas entre pivotes",    group="Divergencias")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CONFIGURACIÓN - GESTIÓN DE RIESGO ATR
+// ════════════════════════════════════════════════════════════════════════════════
+
+atr_length      = input.int(14,      "ATR Length",                   minval=1,    maxval=50,  group="Riesgo ATR", tooltip="Período del ATR. 14 es el estándar de Wilder")
+atr_sl_mult     = input.float(1.5,   "Multiplicador Stop Loss (ATR)", minval=0.5,  maxval=5.0, step=0.1, group="Riesgo ATR", tooltip="Stop = Entrada ± (mult × ATR). 1.5x es conservador, 2x moderado, 3x amplio")
+atr_tp_mult     = input.float(3.0,   "Multiplicador Take Profit (ATR)", minval=1.0, maxval=10.0, step=0.5, group="Riesgo ATR", tooltip="TP = Entrada ± (mult × ATR). Debe ser > SL mult para R/R positivo")
+risk_pct        = input.float(1.0,   "Riesgo por Operación (%)",     minval=0.25, maxval=5.0, step=0.25, group="Riesgo ATR", tooltip="% del capital a arriesgar por trade. 1% es el estándar profesional")
+account_size    = input.float(10000, "Capital de Cuenta ($)",        minval=100,  step=1000,  group="Riesgo ATR", tooltip="Tamaño total de la cuenta para calcular el tamaño de posición")
+show_risk_table = input.bool(true,   "Mostrar Panel de Riesgo",      group="Riesgo ATR")
+show_sl_tp      = input.bool(true,   "Mostrar Líneas SL / TP",       group="Riesgo ATR")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CUSTOM TYPES
+// ════════════════════════════════════════════════════════════════════════════════
+
+type IndicatorSignal
+    bool bullish
+    bool bearish
+    float strength
+    string status
+
+type ConfluenceResult
+    int bullish_count
+    int bearish_count
+    float bull_score
+    float bear_score
+    bool strong_buy
+    bool strong_sell
+    string recommendation
+
+type PremarketScore
+    float price_score
+    float volume_score
+    float total_score
+    string risk_level
+    string opportunity
+    color score_color
+
+type PremarketStats
+    float prev_close
+    float current_price
+    float change_pct
+    float volume_current
+    float volume_avg
+    float volume_ratio
+    bool is_premarket
+    int bars_to_open
+
+type RiskLevel
+    float stop_loss
+    float take_profit
+    float risk_pts
+    float reward_pts
+    float rr_ratio
+    float position_size
+    float risk_dollars
+    float atr_value
+    float atr_pct
+    string volatility
+    bool   is_buy
+
+// ════════════════════════════════════════════════════════════════════════════════
+// FUNCIONES - CONFLUENCIA
+// ════════════════════════════════════════════════════════════════════════════════
+
+calc_asl(int length) =>
+    (ta.ema(close, length-1) + ta.wma(close, length)) / 2
+
+calc_asl_signal() =>
+    asl21         = calc_asl(asl_length)
+    crossing_up   = ta.crossover(close, asl21)
+    crossing_down = ta.crossunder(close, asl21)
+    above_asl     = close > asl21
+    below_asl     = close < asl21
+    asl_rising    = asl21 > asl21[1]
+    asl_falling   = asl21 < asl21[1]
+    strength_bull = 0.0
+    strength_bear = 0.0
+    if crossing_up and asl_rising
+        strength_bull := 1.0
+    else if above_asl and asl_rising
+        strength_bull := 0.7
+    else if above_asl
+        strength_bull := 0.4
+    if crossing_down and asl_falling
+        strength_bear := 1.0
+    else if below_asl and asl_falling
+        strength_bear := 0.7
+    else if below_asl
+        strength_bear := 0.4
+    status = crossing_up ? "Cruce Alcista" : crossing_down ? "Cruce Bajista" : above_asl and asl_rising ? "Alcista Fuerte" : below_asl and asl_falling ? "Bajista Fuerte" : above_asl ? "Alcista" : below_asl ? "Bajista" : "Neutral"
+    [IndicatorSignal.new(strength_bull > 0.5, strength_bear > 0.5, math.max(strength_bull, strength_bear), status), asl21]
+
+calc_ema_signal() =>
+    ema20        = ta.ema(close, ema_fast)
+    ema50        = ta.ema(close, ema_slow)
+    ema200       = ta.ema(close, ema_trend)
+    golden_cross = ta.crossover(ema20, ema50)
+    death_cross  = ta.crossunder(ema20, ema50)
+    uptrend      = close > ema200
+    downtrend    = close < ema200
+    full_bullish = ema20 > ema50 and ema50 > ema200
+    full_bearish = ema20 < ema50 and ema50 < ema200
+    strength_bull = 0.0
+    strength_bear = 0.0
+    if golden_cross and uptrend
+        strength_bull := 1.0
+    else if ema20 > ema50 and uptrend
+        strength_bull := 0.7
+    else if uptrend
+        strength_bull := 0.3
+    if death_cross and downtrend
+        strength_bear := 1.0
+    else if ema20 < ema50 and downtrend
+        strength_bear := 0.7
+    else if downtrend
+        strength_bear := 0.3
+    status = full_bullish ? "Alcista Fuerte" : full_bearish ? "Bajista Fuerte" : uptrend ? "Alcista" : downtrend ? "Bajista" : "Neutral"
+    [IndicatorSignal.new(strength_bull > 0.5, strength_bear > 0.5, math.max(strength_bull, strength_bear), status), ema20, ema50, ema200]
+
+calc_macd_signal() =>
+    [macd_line, signal_line, hist] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+    bullish_cross = ta.crossover(macd_line, signal_line)
+    bearish_cross = ta.crossunder(macd_line, signal_line)
+    above_zero    = macd_line > 0
+    below_zero    = macd_line < 0
+    hist_growing  = hist > hist[1]
+    hist_falling  = hist < hist[1]
+    strength_bull = 0.0
+    strength_bear = 0.0
+    if bullish_cross and above_zero
+        strength_bull := 1.0
+    else if bullish_cross
+        strength_bull := 0.7
+    else if macd_line > signal_line and hist_growing
+        strength_bull := 0.5
+    else if macd_line > signal_line
+        strength_bull := 0.3
+    if bearish_cross and below_zero
+        strength_bear := 1.0
+    else if bearish_cross
+        strength_bear := 0.7
+    else if macd_line < signal_line and hist_falling
+        strength_bear := 0.5
+    else if macd_line < signal_line
+        strength_bear := 0.3
+    status = bullish_cross ? "Cruce Alcista" : bearish_cross ? "Cruce Bajista" : macd_line > signal_line and above_zero ? "Alcista Fuerte" : macd_line < signal_line and below_zero ? "Bajista Fuerte" : macd_line > signal_line ? "Alcista" : macd_line < signal_line ? "Bajista" : "Neutral"
+    IndicatorSignal.new(strength_bull > 0.5, strength_bear > 0.5, math.max(strength_bull, strength_bear), status)
+
+calc_rsi_signal() =>
+    rsi             = ta.rsi(close, rsi_length)
+    oversold        = rsi < 30
+    overbought      = rsi > 70
+    neutral_low     = rsi >= 30 and rsi < 50
+    neutral_high    = rsi >= 50 and rsi <= 70
+    crossing_up_30  = ta.crossover(rsi, 30)
+    crossing_down_70 = ta.crossunder(rsi, 70)
+    crossing_up_50  = ta.crossover(rsi, 50)
+    crossing_down_50 = ta.crossunder(rsi, 50)
+    strength_bull = 0.0
+    strength_bear = 0.0
+    if crossing_up_30
+        strength_bull := 1.0
+    else if crossing_up_50
+        strength_bull := 0.8
+    else if neutral_high
+        strength_bull := 0.5
+    else if oversold
+        strength_bull := 0.7
+    if crossing_down_70
+        strength_bear := 1.0
+    else if crossing_down_50
+        strength_bear := 0.8
+    else if neutral_low
+        strength_bear := 0.5
+    else if overbought
+        strength_bear := 0.7
+    status = oversold ? "Sobreventa" : overbought ? "Sobrecompra" : crossing_up_30 ? "Salida Sobreventa" : crossing_down_70 ? "Salida Sobrecompra" : neutral_high ? "Alcista" : neutral_low ? "Bajista" : "Neutral"
+    IndicatorSignal.new(strength_bull > 0.5, strength_bear > 0.5, math.max(strength_bull, strength_bear), status)
+
+calc_volume_signal() =>
+    vol_ma        = ta.sma(volume, 20)
+    high_volume   = volume > vol_ma * 1.5
+    price_up      = close > close[1]
+    price_down    = close < close[1]
+    body_size     = math.abs(close - open)
+    avg_body      = ta.sma(body_size, 14)
+    strong_candle = body_size > avg_body * 1.5
+    strength_bull = 0.0
+    strength_bear = 0.0
+    if high_volume and price_up and strong_candle
+        strength_bull := 1.0
+    else if high_volume and price_up
+        strength_bull := 0.7
+    else if price_up
+        strength_bull := 0.3
+    if high_volume and price_down and strong_candle
+        strength_bear := 1.0
+    else if high_volume and price_down
+        strength_bear := 0.7
+    else if price_down
+        strength_bear := 0.3
+    status = high_volume and price_up ? "Compra Fuerte" : high_volume and price_down ? "Venta Fuerte" : price_up ? "Compra Normal" : price_down ? "Venta Normal" : "Neutral"
+    [IndicatorSignal.new(strength_bull > 0.5, strength_bear > 0.5, math.max(strength_bull, strength_bear), status), volume, vol_ma]
+
+calc_momentum_signal() =>
+    roc               = ta.roc(close, 10)
+    roc_ma            = ta.sma(roc, 10)
+    positive_momentum = roc > 0
+    negative_momentum = roc < 0
+    accelerating      = roc > roc_ma
+    decelerating      = roc < roc_ma
+    strength_bull = 0.0
+    strength_bear = 0.0
+    if positive_momentum and accelerating and roc > 2
+        strength_bull := 1.0
+    else if positive_momentum and accelerating
+        strength_bull := 0.7
+    else if positive_momentum
+        strength_bull := 0.4
+    if negative_momentum and decelerating and roc < -2
+        strength_bear := 1.0
+    else if negative_momentum and decelerating
+        strength_bear := 0.7
+    else if negative_momentum
+        strength_bear := 0.4
+    status = positive_momentum and accelerating ? "Acelerando ↑" : negative_momentum and decelerating ? "Acelerando ↓" : positive_momentum ? "Positivo" : negative_momentum ? "Negativo" : "Neutral"
+    IndicatorSignal.new(strength_bull > 0.5, strength_bear > 0.5, math.max(strength_bull, strength_bear), status)
+
+apply_quality_filters(is_buy, ema20, ema50, ema200, vol, vol_ma, last_signal_bar) =>
+    filter_pass = true
+    if enable_trend_filter
+        if is_buy
+            strong_downtrend = close < ema200 and ema20 < ema50 and ema50 < ema200
+            filter_pass := filter_pass and not strong_downtrend
+        else
+            strong_uptrend = close > ema200 and ema20 > ema50 and ema50 > ema200
+            filter_pass := filter_pass and not strong_uptrend
+    if enable_volume_filter
+        filter_pass := filter_pass and vol >= vol_ma * 0.8
+    filter_pass := filter_pass and (bar_index - last_signal_bar) >= min_bars_between
+    filter_pass
+
+calc_confluence(last_buy_bar, last_sell_bar) =>
+    [asl_sig, asl21]                = calc_asl_signal()
+    [ema_sig, ema20, ema50, ema200] = calc_ema_signal()
+    macd_sig                        = calc_macd_signal()
+    rsi_sig                         = calc_rsi_signal()
+    [vol_sig, vol, vol_ma]          = calc_volume_signal()
+    mom_sig                         = calc_momentum_signal()
+    bull_count = 0
+    bear_count = 0
+    if asl_sig.bullish
+        bull_count += 1
+    if asl_sig.bearish
+        bear_count += 1
+    if ema_sig.bullish
+        bull_count += 1
+    if ema_sig.bearish
+        bear_count += 1
+    if macd_sig.bullish
+        bull_count += 1
+    if macd_sig.bearish
+        bear_count += 1
+    if rsi_sig.bullish
+        bull_count += 1
+    if rsi_sig.bearish
+        bear_count += 1
+    if vol_sig.bullish
+        bull_count += 1
+    if vol_sig.bearish
+        bear_count += 1
+    if mom_sig.bullish
+        bull_count += 1
+    if mom_sig.bearish
+        bear_count += 1
+    bull_score       = asl_sig.strength * 15 + ema_sig.strength * 25 + macd_sig.strength * 25 + rsi_sig.strength * 15 + vol_sig.strength * 10 + mom_sig.strength * 10
+    bear_score       = asl_sig.strength * 15 + ema_sig.strength * 25 + macd_sig.strength * 25 + rsi_sig.strength * 15 + vol_sig.strength * 10 + mom_sig.strength * 10
+    final_bull_score = asl_sig.bullish or ema_sig.bullish or macd_sig.bullish or rsi_sig.bullish or vol_sig.bullish or mom_sig.bullish ? bull_score : 0
+    final_bear_score = asl_sig.bearish or ema_sig.bearish or macd_sig.bearish or rsi_sig.bearish or vol_sig.bearish or mom_sig.bearish ? bear_score : 0
+    strong_buy_base  = bull_count >= min_confluence and final_bull_score >= min_score
+    strong_sell_base = bear_count >= min_confluence and final_bear_score >= min_score
+    buy_pass         = apply_quality_filters(true,  ema20, ema50, ema200, vol, vol_ma, last_buy_bar)
+    sell_pass        = apply_quality_filters(false, ema20, ema50, ema200, vol, vol_ma, last_sell_bar)
+    strong_buy       = strong_buy_base  and buy_pass
+    strong_sell      = strong_sell_base and sell_pass
+    recommendation   = strong_buy ? "COMPRAR 🚀" : strong_sell ? "VENDER ⚠️" : bull_count >= 3 ? "Compra (débil)" : bear_count >= 3 ? "Venta (débil)" : bull_count > bear_count ? "Sesgo Alcista" : bear_count > bull_count ? "Sesgo Bajista" : "ESPERAR ⏸"
+    [ConfluenceResult.new(bull_count, bear_count, final_bull_score, final_bear_score, strong_buy, strong_sell, recommendation), asl_sig, ema_sig, macd_sig, rsi_sig, vol_sig, mom_sig, asl21, ema20, ema50, ema200]
+
+// ════════════════════════════════════════════════════════════════════════════════
+// FUNCIONES - PREMARKET SCANNER
+// ════════════════════════════════════════════════════════════════════════════════
+
+get_score_color(score, is_positive) =>
+    score >= 85 ? (is_positive ? #00FF00 : #FF0000) : score >= 65 ? (is_positive ? #88FF00 : #FF6600) : score >= 40 ? (is_positive ? #FFFF00 : #FFA500) : color.gray
+
+calc_premarket_stats() =>
+    prev_close  = request.security(syminfo.tickerid, "D", close[1], barmerge.gaps_off, barmerge.lookahead_on)
+    change_pct  = prev_close != 0 ? ((close - prev_close) / prev_close) * 100 : 0
+    vol_avg     = ta.sma(volume, 20)
+    vol_ratio   = vol_avg != 0 ? volume / vol_avg : 1
+    PremarketStats.new(prev_close, close, change_pct, volume, vol_avg, vol_ratio, session.ispremarket, na)
+
+calc_premarket_score(stats) =>
+    abs_change  = math.abs(stats.change_pct)
+    price_score = abs_change >= threshold_extreme ? 100.0 : abs_change >= threshold_strong ? 70.0 + (abs_change - threshold_strong) / (threshold_extreme - threshold_strong) * 30 : abs_change >= threshold_moderate ? 40.0 + (abs_change - threshold_moderate) / (threshold_strong - threshold_moderate) * 30 : (abs_change / threshold_moderate) * 40
+    vol_score   = stats.volume_ratio >= 3.0 ? 100.0 : stats.volume_ratio >= 2.0 ? 70.0 + (stats.volume_ratio - 2.0) * 30 : stats.volume_ratio >= 1.0 ? 40.0 + (stats.volume_ratio - 1.0) * 30 : stats.volume_ratio * 40
+    total_score = enable_volume_scoring ? (price_score * (100 - vol_weight) / 100 + vol_score * vol_weight / 100) : price_score
+    risk_level  = total_score >= 85 ? "🔥 EXTREMO" : total_score >= 65 ? "⚠️ ALTO" : total_score >= 40 ? "⚡ MODERADO" : "• NORMAL"
+    opportunity = stats.change_pct > threshold_strong ? "🚀 COMPRA FUERTE" : stats.change_pct > threshold_moderate ? "📈 COMPRA" : stats.change_pct < -threshold_strong ? "🔻 VENTA FUERTE" : stats.change_pct < -threshold_moderate ? "📉 VENTA" : "➡️ NEUTRO"
+    PremarketScore.new(price_score, vol_score, total_score, risk_level, opportunity, get_score_color(total_score, stats.change_pct > 0))
+
+method get_gauge_bar(PremarketScore this, width) =>
+    filled_bars = math.floor(this.total_score / 100 * width)
+    gauge = ""
+    for i = 0 to width - 1
+        gauge := gauge + (i < filled_bars ? "█" : "░")
+    gauge
+
+method get_grade(PremarketScore this) =>
+    this.total_score >= 90 ? "A+" : this.total_score >= 80 ? "A" : this.total_score >= 70 ? "B+" : this.total_score >= 60 ? "B" : this.total_score >= 50 ? "C" : this.total_score >= 40 ? "D" : "F"
+
+// ════════════════════════════════════════════════════════════════════════════════
+// FUNCIONES - GESTIÓN DE RIESGO ATR
+// ════════════════════════════════════════════════════════════════════════════════
+
+calc_risk_level(is_buy, entry_price) =>
+    atr_val      = ta.atr(atr_length)
+    sl           = is_buy ? entry_price - atr_sl_mult * atr_val : entry_price + atr_sl_mult * atr_val
+    tp           = is_buy ? entry_price + atr_tp_mult * atr_val : entry_price - atr_tp_mult * atr_val
+    risk_pts     = math.abs(entry_price - sl)
+    reward_pts   = math.abs(tp - entry_price)
+    rr           = risk_pts > 0 ? reward_pts / risk_pts : 0.0
+    risk_dollars = account_size * risk_pct / 100
+    units        = risk_pts > 0 ? risk_dollars / risk_pts : 0.0
+    atr_pct      = entry_price > 0 ? (atr_val / entry_price) * 100 : 0.0
+    volatility   = atr_pct > 3.0 ? "🔥 ALTA" : atr_pct > 1.5 ? "⚡ NORMAL" : "🌊 BAJA"
+    RiskLevel.new(sl, tp, risk_pts, reward_pts, rr, units, risk_dollars, atr_val, atr_pct, volatility, is_buy)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// DATOS FUNDAMENTALES (GLOBAL SCOPE)
+// ════════════════════════════════════════════════════════════════════════════════
+
+eps_ttm = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE",         "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+eps_fy  = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE",         "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+f_eps   = not na(eps_ttm) ? eps_ttm : eps_fy
+f_pe    = f_eps > 0 ? close / f_eps : na
+
+ev_ttm  = request.financial(syminfo.tickerid, "ENTERPRISE_VALUE",           "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+ev_fy   = request.financial(syminfo.tickerid, "ENTERPRISE_VALUE",           "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+f_ev    = not na(ev_ttm) ? ev_ttm : ev_fy
+eb_ttm  = request.financial(syminfo.tickerid, "EBITDA",                     "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+eb_fy   = request.financial(syminfo.tickerid, "EBITDA",                     "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+f_eb    = not na(eb_ttm) ? eb_ttm : eb_fy
+f_ev_eb = f_eb > 0 ? f_ev / f_eb : na
+
+oi_ttm  = request.financial(syminfo.tickerid, "OPERATING_INCOME",           "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+oi_fy   = request.financial(syminfo.tickerid, "OPERATING_INCOME",           "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+f_oi    = not na(oi_ttm) ? oi_ttm : oi_fy
+rv_ttm  = request.financial(syminfo.tickerid, "TOTAL_REVENUE",              "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+rv_fy   = request.financial(syminfo.tickerid, "TOTAL_REVENUE",              "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+f_rv    = not na(rv_ttm) ? rv_ttm : rv_fy
+f_mo    = (f_rv != 0 and not na(f_oi) and not na(f_rv)) ? (f_oi / f_rv) * 100 : na
+
+nd_ttm  = request.financial(syminfo.tickerid, "NET_DEBT",                   "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+nd_fy   = request.financial(syminfo.tickerid, "NET_DEBT",                   "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+f_nd    = not na(nd_ttm) ? nd_ttm : nd_fy
+f_de_eb = (f_eb > 0 and not na(f_nd)) ? f_nd / f_eb : na
+
+ro_ttm  = request.financial(syminfo.tickerid, "RETURN_ON_INVESTED_CAPITAL", "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+ro_fy   = request.financial(syminfo.tickerid, "RETURN_ON_INVESTED_CAPITAL", "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+f_roic  = not na(ro_ttm) ? ro_ttm : ro_fy
+
+// ════════════════════════════════════════════════════════════════════════════════
+// LÓGICA FUNDAMENTAL — COLORES Y SEÑAL
+// ════════════════════════════════════════════════════════════════════════════════
+
+is_t   = syminfo.sector == "Technology Services" or syminfo.sector == "Electronic Technology"
+is_b   = syminfo.sector == "Finance" or syminfo.sector == "Energy Minerals" or syminfo.sector == "Utilities"
+sec    = s_in == "Auto" ? (is_t ? "Tecnologia" : is_b ? "Bancos" : "General") : s_in
+
+pe_green_th  = sec == "Tecnologia" ? 25.0 : sec == "Bancos" ? 8.0  : 15.0
+pe_orange_th = sec == "Tecnologia" ? 35.0 : sec == "Bancos" ? 12.0 : 25.0
+ev_green_th  = sec == "Tecnologia" ? 12.0 : sec == "Bancos" ? 6.0  : 10.0
+ev_orange_th = sec == "Tecnologia" ? 22.0 : sec == "Bancos" ? 10.0 : 15.0
+mo_green_th  = sec == "Tecnologia" ? 40.0 : sec == "Bancos" ? 30.0 : 12.0
+mo_orange_th = sec == "Tecnologia" ? 20.0 : sec == "Bancos" ? 15.0 : 4.0
+
+pe_bull = not na(f_pe)    and f_pe    < pe_green_th
+ev_bull = not na(f_ev_eb) and f_ev_eb < ev_green_th
+mo_bull = not na(f_mo)    and f_mo   >= mo_green_th
+de_bull = not na(f_de_eb) and f_de_eb < 2.0
+ro_bull = not na(f_roic)  and f_roic >= 25.0
+
+fund_bull_count = (pe_bull ? 1 : 0) + (ev_bull ? 1 : 0) + (mo_bull ? 1 : 0) + (de_bull ? 1 : 0) + (ro_bull ? 1 : 0)
+fund_strong_buy = fund_bull_count >= fund_min_buy
+fund_signal_text = fund_bull_count >= 4 ? "COMPRA FUERTE 🚀" : fund_bull_count == 3 ? "COMPRA 📈" : fund_bull_count == 2 ? "NEUTRAL ⏸" : "PRECAUCIÓN ⚠️"
+fund_signal_bg   = fund_bull_count >= 4 ? color.new(color.lime, 30) : fund_bull_count == 3 ? color.new(color.green, 50) : fund_bull_count == 2 ? color.new(color.gray, 55) : color.new(color.maroon, 30)
+
+pe_vote = pe_bull ? "🟢" : na(f_pe)    ? "⚪" : f_pe    <= pe_orange_th ? "🟡" : "🔴"
+ev_vote = ev_bull ? "🟢" : na(f_ev_eb) ? "⚪" : f_ev_eb <= ev_orange_th ? "🟡" : "🔴"
+mo_vote = mo_bull ? "🟢" : na(f_mo)    ? "⚪" : f_mo   >= mo_orange_th  ? "🟡" : "🔴"
+de_vote = de_bull ? "🟢" : na(f_de_eb) ? "⚪" : f_de_eb <= 4.0          ? "🟡" : "🔴"
+ro_vote = ro_bull ? "🟢" : na(f_roic)  ? "⚪" : f_roic >= 10.0          ? "🟡" : "🔴"
+
+// ════════════════════════════════════════════════════════════════════════════════
+// DIVERGENCIAS — DETECCIÓN (GLOBAL SCOPE)
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Series propias para divergencias (independientes de las funciones de confluencia)
+div_rsi                              = ta.rsi(close, rsi_length)
+[div_macd_line, div_sig_line, div_hist] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+
+// Pivotes en precio — confirmados div_pivot_len barras atrás
+pl_price = ta.pivotlow(low,   div_pivot_len, div_pivot_len)
+ph_price = ta.pivothigh(high, div_pivot_len, div_pivot_len)
+
+// RSI e histograma MACD en los mismos pivotes
+rsi_at_pl  = not na(pl_price) ? div_rsi[div_pivot_len]  : na
+rsi_at_ph  = not na(ph_price) ? div_rsi[div_pivot_len]  : na
+hist_at_pl = not na(pl_price) ? div_hist[div_pivot_len] : na
+hist_at_ph = not na(ph_price) ? div_hist[div_pivot_len] : na
+
+// Almacén del pivote anterior (para comparar con el actual)
+var float prev_low_price  = na
+var int   prev_low_bar    = na
+var float prev_low_rsi    = na
+var float prev_low_hist   = na
+
+var float prev_high_price = na
+var int   prev_high_bar   = na
+var float prev_high_rsi   = na
+var float prev_high_hist  = na
+
+// Divergencias alcistas (pivot lows): precio lower low + indicador higher low
+bull_div_rsi  = false
+bull_div_macd = false
+
+if not na(pl_price)
+    if not na(prev_low_price)
+        if pl_price < prev_low_price and not na(rsi_at_pl)  and not na(prev_low_rsi)  and rsi_at_pl  > prev_low_rsi
+            bull_div_rsi  := true
+        if pl_price < prev_low_price and not na(hist_at_pl) and not na(prev_low_hist) and hist_at_pl > prev_low_hist
+            bull_div_macd := true
+    prev_low_price := pl_price
+    prev_low_bar   := bar_index - div_pivot_len
+    prev_low_rsi   := rsi_at_pl
+    prev_low_hist  := hist_at_pl
+
+// Divergencias bajistas (pivot highs): precio higher high + indicador lower high
+bear_div_rsi  = false
+bear_div_macd = false
+
+if not na(ph_price)
+    if not na(prev_high_price)
+        if ph_price > prev_high_price and not na(rsi_at_ph)  and not na(prev_high_rsi)  and rsi_at_ph  < prev_high_rsi
+            bear_div_rsi  := true
+        if ph_price > prev_high_price and not na(hist_at_ph) and not na(prev_high_hist) and hist_at_ph < prev_high_hist
+            bear_div_macd := true
+    prev_high_price := ph_price
+    prev_high_bar   := bar_index - div_pivot_len
+    prev_high_rsi   := rsi_at_ph
+    prev_high_hist  := hist_at_ph
+
+// Estado persistente para la tabla (última divergencia detectada)
+var string div_rsi_status  = "Ninguna ⚪"
+var string div_rsi_vote    = "⚪"
+var string div_macd_status = "Ninguna ⚪"
+var string div_macd_vote   = "⚪"
+
+if bull_div_rsi
+    div_rsi_status  := "Alcista 📈"
+    div_rsi_vote    := "🟢"
+if bear_div_rsi
+    div_rsi_status  := "Bajista 📉"
+    div_rsi_vote    := "🔴"
+if bull_div_macd
+    div_macd_status := "Alcista 📈"
+    div_macd_vote   := "🟢"
+if bear_div_macd
+    div_macd_status := "Bajista 📉"
+    div_macd_vote   := "🔴"
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CÁLCULOS PRINCIPALES — CONFLUENCIA
+// ════════════════════════════════════════════════════════════════════════════════
+
+var int last_buy_bar  = -999
+var int last_sell_bar = -999
+
+[confluence, asl_sig, ema_sig, macd_sig, rsi_sig, vol_sig, mom_sig, asl21, ema20, ema50, ema200] = calc_confluence(last_buy_bar, last_sell_bar)
+
+var bool prev_strong_buy  = false
+var bool prev_strong_sell = false
+
+new_buy_signal  = confluence.strong_buy  and not prev_strong_buy
+new_sell_signal = confluence.strong_sell and not prev_strong_sell
+
+if new_buy_signal
+    last_buy_bar := bar_index
+if new_sell_signal
+    last_sell_bar := bar_index
+
+prev_strong_buy  := confluence.strong_buy
+prev_strong_sell := confluence.strong_sell
+
+pm_stats = calc_premarket_stats()
+pm_score = calc_premarket_score(pm_stats)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SEÑAL MAESTRA — LÓGICA
+// ════════════════════════════════════════════════════════════════════════════════
+
+master_total     = confluence.strong_buy and fund_strong_buy
+master_tech_only = confluence.strong_buy and not fund_strong_buy
+master_fund_only = fund_strong_buy and not confluence.strong_buy
+
+master_verdict_text = master_total ? "🏆 CONFLUENCIA TOTAL" : master_tech_only ? "📊 Solo Técnica" : master_fund_only ? "📈 Setup Fundamental" : "⏸ SIN SEÑAL"
+master_verdict_bg   = master_total ? color.new(#B8860B, 10) : master_tech_only ? color.new(color.blue, 35) : master_fund_only ? color.new(color.teal, 35) : color.new(color.gray, 60)
+master_hint         = master_total ? "Precio + Fundamentos alineados" : master_tech_only ? "Esperar confirmación fundamental" : master_fund_only ? "Esperar entrada técnica" : "Ninguna condición activa"
+
+tech_pill_text = confluence.strong_buy ? "COMPRA 🚀" : confluence.strong_sell ? "VENTA ⚠️" : confluence.bullish_count > confluence.bearish_count ? "Sesgo Alcista" : confluence.bearish_count > confluence.bullish_count ? "Sesgo Bajista" : "NEUTRAL ⏸"
+tech_pill_bg   = confluence.strong_buy ? color.new(color.lime, 35) : confluence.strong_sell ? color.new(color.maroon, 35) : color.new(color.gray, 60)
+fund_pill_text = fund_bull_count >= 4 ? "COMPRA 🚀" : fund_bull_count == 3 ? "COMPRA 📈" : fund_bull_count == 2 ? "NEUTRAL ⏸" : "PRECAUCIÓN ⚠️"
+fund_pill_bg   = fund_signal_bg
+
+var bool prev_master_total = false
+new_master_total   = master_total and not prev_master_total
+prev_master_total := master_total
+
+// ════════════════════════════════════════════════════════════════════════════════
+// GESTIÓN DE RIESGO — CÁLCULOS Y ESTADO PERSISTENTE
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Guardamos los niveles de la última señal activa para mantener las líneas visibles
+var float active_sl       = na
+var float active_tp       = na
+var bool  active_is_buy   = true
+var int   active_signal_bar = na
+var RiskLevel current_risk = na
+
+// Calculamos el riesgo para la barra actual como referencia live en la tabla
+live_risk_buy  = calc_risk_level(true,  close)
+live_risk_sell = calc_risk_level(false, close)
+
+// Actualizamos el riesgo activo cuando llega una nueva señal
+if new_buy_signal or new_master_total
+    current_risk      := calc_risk_level(true, close)
+    active_sl         := current_risk.stop_loss
+    active_tp         := current_risk.take_profit
+    active_is_buy     := true
+    active_signal_bar := bar_index
+
+if new_sell_signal
+    current_risk      := calc_risk_level(false, close)
+    active_sl         := current_risk.stop_loss
+    active_tp         := current_risk.take_profit
+    active_is_buy     := false
+    active_signal_bar := bar_index
+
+// Determinar el riesgo a mostrar en la tabla:
+// si hay señal activa usamos esos niveles, si no mostramos el live basado en la confluencia actual
+display_risk = not na(active_sl) ? current_risk : (confluence.bullish_count >= confluence.bearish_count ? live_risk_buy : live_risk_sell)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PLOTEO — MEDIAS MÓVILES
+// ════════════════════════════════════════════════════════════════════════════════
+
+plot(show_indicators ? asl21  : na, "ASL 21",  color=color.new(color_asl,   0), linewidth=2)
+plot(show_indicators ? ema20  : na, "EMA 20",  color=color.new(color_fast,  0), linewidth=2)
+plot(show_indicators ? ema50  : na, "EMA 50",  color=color.new(color_slow,  0), linewidth=2)
+plot(show_indicators ? ema200 : na, "EMA 200", color=color.new(color_trend, 0), linewidth=3)
+
+if barstate.islast and show_indicators
+    label.new(x=time, y=asl21,  text="ASL21",  xloc=xloc.bar_time, yloc=yloc.price, color=color.rgb(0,0,0,100), style=label.style_label_left, textcolor=color_asl,   size=size.small)
+    label.new(x=time, y=ema20,  text="EMA20",  xloc=xloc.bar_time, yloc=yloc.price, color=color.rgb(0,0,0,100), style=label.style_label_left, textcolor=color_fast,  size=size.small)
+    label.new(x=time, y=ema50,  text="EMA50",  xloc=xloc.bar_time, yloc=yloc.price, color=color.rgb(0,0,0,100), style=label.style_label_left, textcolor=color_slow,  size=size.small)
+    label.new(x=time, y=ema200, text="EMA200", xloc=xloc.bar_time, yloc=yloc.price, color=color.rgb(0,0,0,100), style=label.style_label_left, textcolor=color_trend, size=size.small)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// GESTIÓN DE RIESGO — LÍNEAS SL / TP EN EL GRÁFICO
+// ════════════════════════════════════════════════════════════════════════════════
+
+var line sl_line    = na
+var line tp_line    = na
+var label sl_label  = na
+var label tp_label  = na
+
+if (new_buy_signal or new_sell_signal or new_master_total) and show_sl_tp
+    // Limpiar líneas previas
+    if not na(sl_line)
+        line.delete(sl_line)
+    if not na(tp_line)
+        line.delete(tp_line)
+    if not na(sl_label)
+        label.delete(sl_label)
+    if not na(tp_label)
+        label.delete(tp_label)
+
+    sl_color = color.new(#FF3D00, 10)
+    tp_color = color.new(#00E676, 10)
+
+    sl_line  := line.new(bar_index, active_sl, bar_index + 1, active_sl,
+                  color=sl_color, width=2, style=line.style_dashed, extend=extend.right)
+    tp_line  := line.new(bar_index, active_tp, bar_index + 1, active_tp,
+                  color=tp_color, width=2, style=line.style_dashed, extend=extend.right)
+
+    sl_label := label.new(bar_index, active_sl,
+                  text=" SL  $" + str.tostring(active_sl, "#.##") + "  (-" + str.tostring(atr_sl_mult, "#.#") + " ATR)",
+                  xloc=xloc.bar_index, yloc=yloc.price,
+                  color=color.new(#FF3D00, 20), textcolor=color.white,
+                  style=label.style_label_right, size=size.small)
+
+    tp_label := label.new(bar_index, active_tp,
+                  text=" TP  $" + str.tostring(active_tp, "#.##") + "  (+" + str.tostring(atr_tp_mult, "#.#") + " ATR)",
+                  xloc=xloc.bar_index, yloc=yloc.price,
+                  color=color.new(#00E676, 20), textcolor=color.white,
+                  style=label.style_label_right, size=size.small)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// DIVERGENCIAS — LABELS Y LÍNEAS EN EL GRÁFICO
+// ════════════════════════════════════════════════════════════════════════════════
+
+if bull_div_rsi and show_div_rsi
+    label.new(bar_index - div_pivot_len, low[div_pivot_len], text="RSI\nDiv ↑",
+      xloc=xloc.bar_index, yloc=yloc.price, color=color.new(color.green, 20),
+      textcolor=color.white, style=label.style_label_up, size=size.small)
+    if show_div_lines and not na(prev_low_bar)
+        line.new(prev_low_bar, prev_low_price, bar_index - div_pivot_len, pl_price,
+          color=color.new(color.green, 30), width=2, style=line.style_dashed)
+
+if bear_div_rsi and show_div_rsi
+    label.new(bar_index - div_pivot_len, high[div_pivot_len], text="RSI\nDiv ↓",
+      xloc=xloc.bar_index, yloc=yloc.price, color=color.new(color.red, 20),
+      textcolor=color.white, style=label.style_label_down, size=size.small)
+    if show_div_lines and not na(prev_high_bar)
+        line.new(prev_high_bar, prev_high_price, bar_index - div_pivot_len, ph_price,
+          color=color.new(color.red, 30), width=2, style=line.style_dashed)
+
+if bull_div_macd and show_div_macd
+    label.new(bar_index - div_pivot_len, low[div_pivot_len], text="MACD\nDiv ↑",
+      xloc=xloc.bar_index, yloc=yloc.price, color=color.new(#00BCD4, 20),
+      textcolor=color.white, style=label.style_label_up, size=size.small)
+    if show_div_lines and not na(prev_low_bar)
+        line.new(prev_low_bar, prev_low_price, bar_index - div_pivot_len, pl_price,
+          color=color.new(#00BCD4, 30), width=2, style=line.style_dotted)
+
+if bear_div_macd and show_div_macd
+    label.new(bar_index - div_pivot_len, high[div_pivot_len], text="MACD\nDiv ↓",
+      xloc=xloc.bar_index, yloc=yloc.price, color=color.new(#FF5722, 20),
+      textcolor=color.white, style=label.style_label_down, size=size.small)
+    if show_div_lines and not na(prev_high_bar)
+        line.new(prev_high_bar, prev_high_price, bar_index - div_pivot_len, ph_price,
+          color=color.new(#FF5722, 30), width=2, style=line.style_dotted)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SEÑALES — CONFLUENCIA EN EL GRÁFICO
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_master_label and new_master_total
+    label.new(bar_index, low, text="🏆 CONFLUENCIA TOTAL\nTéc " + str.tostring(confluence.bullish_count) + "/6 · Fund " + str.tostring(fund_bull_count) + "/5\n$" + str.tostring(close, "#.##"),
+      color=color.new(#B8860B, 5), textcolor=color.white, style=label.style_label_up, size=size.normal)
+
+if show_signals and new_buy_signal and not new_master_total
+    label.new(bar_index, low, text="✓ COMPRA\n" + str.tostring(confluence.bullish_count) + "/6 • " + str.tostring(confluence.bull_score, "#") + "%\n$" + str.tostring(close, "#.##"),
+      color=color.new(#044A04, 0), textcolor=color.white, style=label.style_label_up, size=size.small)
+
+if show_signals and new_sell_signal
+    label.new(bar_index, high, text="✓ VENTA\n" + str.tostring(confluence.bearish_count) + "/6 • " + str.tostring(confluence.bear_score, "#") + "%\n$" + str.tostring(close, "#.##"),
+      color=color.new(#7A1C1C, 0), textcolor=color.white, style=label.style_label_down, size=size.small)
+
+weak_buy  = confluence.bullish_count >= 2 and confluence.bullish_count < min_confluence and confluence.bullish_count > confluence.bearish_count
+weak_sell = confluence.bearish_count >= 2 and confluence.bearish_count < min_confluence and confluence.bearish_count > confluence.bullish_count
+
+if show_signals and show_weak_signals and weak_buy  and not confluence.strong_buy
+    label.new(bar_index, low,  text=str.tostring(confluence.bullish_count) + "/6", color=color.new(color.green, 50), textcolor=color.white, style=label.style_label_up,   size=size.tiny)
+if show_signals and show_weak_signals and weak_sell and not confluence.strong_sell
+    label.new(bar_index, high, text=str.tostring(confluence.bearish_count) + "/6", color=color.new(color.red,   50), textcolor=color.white, style=label.style_label_down, size=size.tiny)
+
+plotshape(show_signals and new_master_total,                        "Confluencia Total", shape.diamond,      location.belowbar, color.new(#FFD700, 0), size=size.normal)
+plotshape(show_signals and new_buy_signal and not new_master_total, "Compra Fuerte",     shape.triangleup,   location.belowbar, color.new(#044A04, 0), size=size.small)
+plotshape(show_signals and new_sell_signal,                         "Venta Fuerte",      shape.triangledown, location.abovebar, color.new(#7A1C1C, 0), size=size.small)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// TABLA SEÑAL MAESTRA (middle_right)
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_master_table and barstate.islast
+    var table master_table = table.new(position.bottom_center, 2, 6, border_width=1, border_color=color.gray, frame_width=1, frame_color=color.gray)
+
+    table.cell(master_table, 0, 0, "🏆 Señal Maestra", text_color=color.white, bgcolor=color.new(color.purple, 20), text_size=size.normal)
+    table.merge_cells(master_table, 0, 0, 1, 0)
+
+    table.cell(master_table, 0, 1, "Pilar",  text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+    table.cell(master_table, 1, 1, "Estado", text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+
+    table.cell(master_table, 0, 2, "📊 Técnica  " + str.tostring(confluence.bullish_count) + "/6", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(master_table, 1, 2, tech_pill_text, text_color=color.white, bgcolor=tech_pill_bg, text_size=size.small)
+
+    table.cell(master_table, 0, 3, "📈 Fundamental  " + str.tostring(fund_bull_count) + "/5", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(master_table, 1, 3, fund_pill_text, text_color=color.white, bgcolor=fund_pill_bg, text_size=size.small)
+
+    table.cell(master_table, 0, 4, "VEREDICTO", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
+    table.merge_cells(master_table, 0, 4, 1, 4)
+
+    table.cell(master_table, 0, 5, master_verdict_text + "\n" + master_hint, text_color=color.white, bgcolor=master_verdict_bg, text_size=size.small)
+    table.merge_cells(master_table, 0, 5, 1, 5)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// TABLA CONFLUENCIA (top_right) — extendida con filas de divergencias
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_table and barstate.islast
+    var table conf_table = table.new(position.top_right, 3, 12, border_width=1, border_color=color.gray, frame_width=1, frame_color=color.gray)
+
+    table.cell(conf_table, 0, 0, "Sistema Confluencia v7 ULTRA", text_color=color.white, bgcolor=color.new(color.purple, 20), text_size=size.normal)
+    table.merge_cells(conf_table, 0, 0, 2, 0)
+
+    table.cell(conf_table, 0, 1, "Precio", text_color=color.white, bgcolor=color.new(color.gray, 50))
+    table.cell(conf_table, 1, 1, "$" + str.tostring(close, "#.##"), text_color=color.white, bgcolor=color.new(color.blue, 70))
+    table.merge_cells(conf_table, 1, 1, 2, 1)
+
+    conf_text = str.tostring(confluence.bullish_count) + "/6 🟢  " + str.tostring(confluence.bearish_count) + "/6 🔴"
+    table.cell(conf_table, 0, 2, "Confluencia", text_color=color.white, bgcolor=color.new(color.gray, 50))
+    table.cell(conf_table, 1, 2, conf_text, text_color=color.white, bgcolor=color.new(color.gray, 80))
+    table.merge_cells(conf_table, 1, 2, 2, 2)
+
+    table.cell(conf_table, 0, 3, "Score", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(conf_table, 1, 3, "🟢 " + str.tostring(confluence.bull_score, "#") + "%", text_color=color.white, bgcolor=color.new(color.green, 70), text_size=size.small)
+    table.cell(conf_table, 2, 3, "🔴 " + str.tostring(confluence.bear_score, "#") + "%", text_color=color.white, bgcolor=color.new(color.red,   70), text_size=size.small)
+
+    table.cell(conf_table, 0, 4, "📊 Indicador", text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+    table.cell(conf_table, 1, 4, "Señal",        text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+    table.cell(conf_table, 2, 4, "Estado",       text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+
+    asl_vote = asl_sig.bullish ? "🟢" : asl_sig.bearish ? "🔴" : "⚪"
+    table.cell(conf_table, 0, 5, "ASL21",    text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+    table.cell(conf_table, 1, 5, asl_vote,   text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(conf_table, 2, 5, asl_sig.status, text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+
+    ema_vote = ema_sig.bullish ? "🟢" : ema_sig.bearish ? "🔴" : "⚪"
+    table.cell(conf_table, 0, 6, "EMAs",     text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+    table.cell(conf_table, 1, 6, ema_vote,   text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(conf_table, 2, 6, ema_sig.status, text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+
+    macd_vote = macd_sig.bullish ? "🟢" : macd_sig.bearish ? "🔴" : "⚪"
+    table.cell(conf_table, 0, 7, "MACD",     text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+    table.cell(conf_table, 1, 7, macd_vote,  text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(conf_table, 2, 7, macd_sig.status, text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+
+    rsi_vote = rsi_sig.bullish ? "🟢" : rsi_sig.bearish ? "🔴" : "⚪"
+    table.cell(conf_table, 0, 8, "RSI",      text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+    table.cell(conf_table, 1, 8, rsi_vote,   text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(conf_table, 2, 8, rsi_sig.status, text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+
+    vol_mom_bull   = vol_sig.bullish or mom_sig.bullish
+    vol_mom_bear   = vol_sig.bearish or mom_sig.bearish
+    vol_mom_vote   = vol_mom_bull ? "🟢" : vol_mom_bear ? "🔴" : "⚪"
+    vol_mom_status = vol_sig.status + " / " + mom_sig.status
+    table.cell(conf_table, 0, 9, "Vol/Mom",     text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+    table.cell(conf_table, 1, 9, vol_mom_vote,  text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(conf_table, 2, 9, vol_mom_status, text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+
+    // Fila 10 — Divergencia RSI
+    table.cell(conf_table, 0, 10, "Div RSI",      text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+    table.cell(conf_table, 1, 10, div_rsi_vote,   text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(conf_table, 2, 10, div_rsi_status, text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+
+    // Fila 11 — Divergencia MACD
+    table.cell(conf_table, 0, 11, "Div MACD",      text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+    table.cell(conf_table, 1, 11, div_macd_vote,   text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(conf_table, 2, 11, div_macd_status, text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PANEL ANÁLISIS FUNDAMENTAL (bottom_right)
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_panel and barstate.islast
+    var table fund_table = table.new(position.bottom_right, 3, 10, border_width=1, border_color=color.gray, frame_width=1, frame_color=color.gray)
+
+    table.cell(fund_table, 0, 0, "Análisis Fundamental", text_color=color.white, bgcolor=color.new(color.purple, 20), text_size=size.normal)
+    table.merge_cells(fund_table, 0, 0, 2, 0)
+
+    table.cell(fund_table, 0, 1, "📊 Métrica", text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+    table.cell(fund_table, 1, 1, "Valor",       text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+    table.cell(fund_table, 2, 1, "Señal",       text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+
+    table.cell(fund_table, 0, 2, "P/E Ratio",      text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+    table.cell(fund_table, 1, 2, na(f_pe)    ? "N/D" : str.tostring(f_pe,    "#.##"),       text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(fund_table, 2, 2, pe_vote, text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    table.cell(fund_table, 0, 3, "EV / EBITDA",   text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+    table.cell(fund_table, 1, 3, na(f_ev_eb) ? "N/D" : str.tostring(f_ev_eb, "#.##"),       text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(fund_table, 2, 3, ev_vote, text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    table.cell(fund_table, 0, 4, "Margen Op.",     text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+    table.cell(fund_table, 1, 4, na(f_mo)    ? "N/D" : str.tostring(f_mo,    "#.##") + "%", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(fund_table, 2, 4, mo_vote, text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    table.cell(fund_table, 0, 5, "Deuda / EBITDA", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+    table.cell(fund_table, 1, 5, na(f_de_eb) ? "N/D" : str.tostring(f_de_eb, "#.##"),       text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(fund_table, 2, 5, de_vote, text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    table.cell(fund_table, 0, 6, "ROIC",           text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+    table.cell(fund_table, 1, 6, na(f_roic)  ? "N/D" : str.tostring(f_roic,  "#.##") + "%", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(fund_table, 2, 6, ro_vote, text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    fund_score_bg = fund_bull_count >= 4 ? color.new(color.green, 50) : fund_bull_count >= 2 ? color.new(color.gray, 60) : color.new(color.maroon, 50)
+    table.cell(fund_table, 0, 7, "Fundamentales", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(fund_table, 1, 7, str.tostring(fund_bull_count) + "/5 🟢", text_color=color.white, bgcolor=fund_score_bg, text_size=size.small)
+    table.cell(fund_table, 2, 7, "Sector: " + sec, text_color=color.white, bgcolor=color.new(color.teal, 50), text_size=size.tiny)
+
+    table.cell(fund_table, 0, 8, "SEÑAL FUNDAMENTAL", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
+    table.merge_cells(fund_table, 0, 8, 2, 8)
+
+    fund_last_row_text = timeframe.isintraday ? "USAR EN DIARIO (D)\n" + fund_signal_text : fund_signal_text
+    fund_last_row_bg   = timeframe.isintraday ? color.new(color.red, 40) : fund_signal_bg
+    table.cell(fund_table, 0, 9, fund_last_row_text, text_color=color.white, bgcolor=fund_last_row_bg, text_size=size.small)
+    table.merge_cells(fund_table, 0, 9, 2, 9)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// DASHBOARD PREMARKET SCANNER (middle_left)
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_pm_table and barstate.islast
+    pos = switch pm_table_position
+        "top_left"    => position.top_left
+        "middle_left" => position.middle_left
+        "bottom_left" => position.bottom_left
+        => position.middle_left
+
+    var table pm_dashboard = table.new(pos, 2, 13, border_width=2, border_color=color.gray)
+
+    table.cell(pm_dashboard, 0, 0, "📊 PREMARKET SCANNER", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.normal)
+    table.merge_cells(pm_dashboard, 0, 0, 1, 0)
+
+    session_text = pm_stats.is_premarket ? "🟢 PREMARKET" : "⚪ REGULAR"
+    session_bg   = pm_stats.is_premarket ? color.new(color.green, 50) : color.new(color.gray, 70)
+    table.cell(pm_dashboard, 0, 1, "Estado",        text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(pm_dashboard, 1, 1, session_text,    text_color=color.white, bgcolor=session_bg,                text_size=size.small)
+
+    table.cell(pm_dashboard, 0, 2, "Cierre Prev",   text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(pm_dashboard, 1, 2, "$" + str.tostring(pm_stats.prev_close, "#.##"),    text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    table.cell(pm_dashboard, 0, 3, "Precio Actual", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(pm_dashboard, 1, 3, "$" + str.tostring(pm_stats.current_price, "#.##"), text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    table.cell(pm_dashboard, 0, 4, "Cambio %",      text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    change_text = (pm_stats.change_pct > 0 ? "+" : "") + str.tostring(pm_stats.change_pct, "#.##") + "%"
+    table.cell(pm_dashboard, 1, 4, change_text, text_color=color.white, bgcolor=color.new(pm_score.score_color, 40), text_size=size.normal)
+
+    table.cell(pm_dashboard, 0, 5, "Vol Ratio",     text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    vol_text  = str.tostring(pm_stats.volume_ratio, "#.##") + "x"
+    vol_color = pm_stats.volume_ratio >= 2 ? color.new(color.lime, 50) : pm_stats.volume_ratio >= 1 ? color.new(color.yellow, 50) : color.new(color.gray, 70)
+    table.cell(pm_dashboard, 1, 5, vol_text, text_color=color.white, bgcolor=vol_color, text_size=size.small)
+
+    table.cell(pm_dashboard, 0, 6, "Score Precio",  text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(pm_dashboard, 1, 6, str.tostring(pm_score.price_score, "#") + "/100", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    if enable_volume_scoring
+        table.cell(pm_dashboard, 0, 7, "Score Vol", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+        table.cell(pm_dashboard, 1, 7, str.tostring(pm_score.volume_score, "#") + "/100", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    row = enable_volume_scoring ? 8 : 7
+    table.cell(pm_dashboard, 0, row, "🎯 SCORE TOTAL", text_color=color.white, bgcolor=color.new(color.purple, 30), text_size=size.small)
+    table.cell(pm_dashboard, 1, row, str.tostring(pm_score.total_score, "#") + "/100", text_color=color.white, bgcolor=color.new(pm_score.score_color, 30), text_size=size.normal)
+
+    if show_gauge
+        row += 1
+        table.cell(pm_dashboard, 0, row, "Intensidad", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.tiny)
+        table.cell(pm_dashboard, 1, row, pm_score.get_gauge_bar(10), text_color=pm_score.score_color, bgcolor=color.new(color.black, 20), text_size=size.small)
+
+    row += 1
+    table.cell(pm_dashboard, 0, row, "Calificación", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(pm_dashboard, 1, row, pm_score.get_grade(), text_color=color.white, bgcolor=color.new(pm_score.score_color, 40), text_size=size.large)
+
+    row += 1
+    table.cell(pm_dashboard, 0, row, "Nivel",  text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(pm_dashboard, 1, row, pm_score.risk_level, text_color=color.white, bgcolor=color.new(pm_score.score_color, 30), text_size=size.small)
+
+    row += 1
+    table.cell(pm_dashboard, 0, row, "Señal",  text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(pm_dashboard, 1, row, pm_score.opportunity, text_color=color.white, bgcolor=color.new(pm_score.score_color, 30), text_size=size.small)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PANEL GESTIÓN DE RIESGO ATR
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_risk_table and barstate.islast
+    var table risk_table = table.new(position.middle_right, 2, 13, border_width=2, border_color=color.gray, frame_width=1, frame_color=color.gray)
+
+    // ── Cabecera ──────────────────────────────────────────────────────────────
+    header_text = not na(active_sl) ? (active_is_buy ? "🛡 Riesgo ATR — COMPRA" : "🛡 Riesgo ATR — VENTA") : "🛡 Gestión de Riesgo ATR"
+    header_bg   = not na(active_sl) ? (active_is_buy ? color.new(color.teal, 20) : color.new(color.maroon, 20)) : color.new(color.navy, 20)
+    table.cell(risk_table, 0, 0, header_text, text_color=color.white, bgcolor=header_bg, text_size=size.normal)
+    table.merge_cells(risk_table, 0, 0, 1, 0)
+
+    // ── Precio de entrada ─────────────────────────────────────────────────────
+    entry_display = not na(active_sl) ? "$" + str.tostring(active_is_buy ? active_sl + display_risk.risk_pts : active_sl - display_risk.risk_pts, "#.##") : "$" + str.tostring(close, "#.##")
+    table.cell(risk_table, 0, 1, "Entrada", text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+    table.cell(risk_table, 1, 1, "$" + str.tostring(close, "#.##"), text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    // ── ATR ───────────────────────────────────────────────────────────────────
+    table.cell(risk_table, 0, 2, "ATR (" + str.tostring(atr_length) + ")", text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+    table.cell(risk_table, 1, 2, str.tostring(display_risk.atr_value, "#.####"), text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    // ── Volatilidad ───────────────────────────────────────────────────────────
+    vol_bg = display_risk.atr_pct > 3.0 ? color.new(#FF3D00, 30) : display_risk.atr_pct > 1.5 ? color.new(color.orange, 40) : color.new(color.teal, 40)
+    table.cell(risk_table, 0, 3, "Volatilidad", text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+    table.cell(risk_table, 1, 3, display_risk.volatility + "  " + str.tostring(display_risk.atr_pct, "#.##") + "%", text_color=color.white, bgcolor=vol_bg, text_size=size.small)
+
+    // ── Stop Loss ─────────────────────────────────────────────────────────────
+    sl_display = not na(active_sl) ? "$" + str.tostring(active_sl, "#.##") : "$" + str.tostring(display_risk.stop_loss, "#.##")
+    table.cell(risk_table, 0, 4, "🔴 Stop Loss", text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+    table.cell(risk_table, 1, 4, sl_display + "  (" + str.tostring(atr_sl_mult, "#.#") + "× ATR)", text_color=color.white, bgcolor=color.new(#FF3D00, 40), text_size=size.small)
+
+    // ── Take Profit ───────────────────────────────────────────────────────────
+    tp_display = not na(active_tp) ? "$" + str.tostring(active_tp, "#.##") : "$" + str.tostring(display_risk.take_profit, "#.##")
+    table.cell(risk_table, 0, 5, "🟢 Take Profit", text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+    table.cell(risk_table, 1, 5, tp_display + "  (" + str.tostring(atr_tp_mult, "#.#") + "× ATR)", text_color=color.white, bgcolor=color.new(#00E676, 40), text_size=size.small)
+
+    // ── Puntos de Riesgo ──────────────────────────────────────────────────────
+    table.cell(risk_table, 0, 6, "Riesgo (pts)", text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+    table.cell(risk_table, 1, 6, str.tostring(display_risk.risk_pts, "#.####"), text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    // ── Puntos de Recompensa ──────────────────────────────────────────────────
+    table.cell(risk_table, 0, 7, "Recompensa (pts)", text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+    table.cell(risk_table, 1, 7, str.tostring(display_risk.reward_pts, "#.####"), text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    // ── Ratio R/R ─────────────────────────────────────────────────────────────
+    rr_bg   = display_risk.rr_ratio >= 2.0 ? color.new(color.green, 40) : display_risk.rr_ratio >= 1.0 ? color.new(color.orange, 50) : color.new(color.red, 50)
+    rr_icon = display_risk.rr_ratio >= 2.0 ? "✅" : display_risk.rr_ratio >= 1.0 ? "⚠️" : "❌"
+    table.cell(risk_table, 0, 8, "Ratio R/R", text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+    table.cell(risk_table, 1, 8, rr_icon + "  1 : " + str.tostring(display_risk.rr_ratio, "#.##"), text_color=color.white, bgcolor=rr_bg, text_size=size.normal)
+
+    // ── Capital en Riesgo ─────────────────────────────────────────────────────
+    table.cell(risk_table, 0, 9, "Capital Riesgo", text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+    table.cell(risk_table, 1, 9, "$" + str.tostring(display_risk.risk_dollars, "#.##") + "  (" + str.tostring(risk_pct, "#.##") + "%)", text_color=color.white, bgcolor=color.new(color.gray, 75), text_size=size.small)
+
+    // ── Tamaño de Posición ────────────────────────────────────────────────────
+    units_text = display_risk.position_size < 1.0
+      ? str.tostring(display_risk.position_size, "#.##") + " acc"
+      : str.tostring(math.floor(display_risk.position_size), "#") + " acc"
+    table.cell(risk_table, 0, 10, "Tamaño Posición", text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+    table.cell(risk_table, 1, 10, units_text, text_color=color.white, bgcolor=color.new(color.blue, 40), text_size=size.normal)
+
+    // ── Capital total utilizado ───────────────────────────────────────────────
+    capital_used    = display_risk.position_size * close
+    capital_used_pct = account_size > 0 ? (capital_used / account_size) * 100 : 0.0
+    table.cell(risk_table, 0, 11, "Capital Usado", text_color=color.white, bgcolor=color.new(color.gray, 60), text_size=size.small)
+    table.cell(risk_table, 1, 11, "$" + str.tostring(capital_used, "#.##") + "  (" + str.tostring(capital_used_pct, "#.#") + "%)", text_color=color.white, bgcolor=color.new(color.gray, 75), text_size=size.small)
+
+    // ── Estado de la señal activa ─────────────────────────────────────────────
+    signal_status_text = not na(active_sl) ? (active_is_buy ? "🚀 Trade COMPRA activo" : "⚠️ Trade VENTA activo") : "⏸ Sin señal activa"
+    signal_status_bg   = not na(active_sl) ? (active_is_buy ? color.new(color.teal, 30) : color.new(color.maroon, 30)) : color.new(color.gray, 60)
+    table.cell(risk_table, 0, 12, signal_status_text, text_color=color.white, bgcolor=signal_status_bg, text_size=size.small)
+    table.merge_cells(risk_table, 0, 12, 1, 12)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ALERTAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+alertcondition(enable_alerts and new_master_total, "🏆 CONFLUENCIA TOTAL",     "Señal maestra: técnica Y fundamental alineadas — máxima calidad de entrada")
+alertcondition(enable_alerts and new_buy_signal,   "CONFLUENCIA v7: COMPRA",   "🚀 COMPRAR ${{close}} - {{plot_0}}/6 - {{plot_1}}%")
+alertcondition(enable_alerts and new_sell_signal,  "CONFLUENCIA v7: VENTA",    "⚠️ VENDER ${{close}} - {{plot_0}}/6 - {{plot_1}}%")
+alertcondition(enable_alerts and fund_strong_buy,  "FUNDAMENTAL: COMPRA",      "📈 Señal de compra fundamental — revisar panel en el gráfico")
+alertcondition(enable_alerts and bull_div_rsi,     "DIVERGENCIA RSI ALCISTA",  "📈 Divergencia alcista RSI — posible reversión al alza")
+alertcondition(enable_alerts and bear_div_rsi,     "DIVERGENCIA RSI BAJISTA",  "📉 Divergencia bajista RSI — posible reversión a la baja")
+alertcondition(enable_alerts and bull_div_macd,    "DIVERGENCIA MACD ALCISTA", "📈 Divergencia alcista MACD — posible reversión al alza")
+alertcondition(enable_alerts and bear_div_macd,    "DIVERGENCIA MACD BAJISTA", "📉 Divergencia bajista MACD — posible reversión a la baja")
+
+plot(confluence.bullish_count, "Bull Count", display=display.none)
+plot(confluence.bull_score,    "Bull Score", display=display.none)

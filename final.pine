@@ -1,0 +1,559 @@
+//@version=6
+//© Diego Santacruz
+indicator(title="Ultimate Pro v1.0 — Final", shorttitle="UltimatePro", overlay=true, 
+     max_lines_count=300, max_labels_count=300)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CONFIGURACIÓN PRINCIPAL
+// ════════════════════════════════════════════════════════════════════════════════
+
+group_sys = "Sistema"
+min_confluence    = input.int(4, "Confluencia Mínima (de 6)", minval=3, maxval=6, group=group_sys)
+enable_trend_filt = input.bool(true, "Filtro Tendencia (EMA 200)", group=group_sys)
+enable_vol_filt   = input.bool(true, "Filtro Volumen (>80% MA)", group=group_sys)
+min_bars_between  = input.int(5, "Barras Entre Señales", minval=1, group=group_sys)
+
+group_vis = "Visualización"
+show_indicators   = input.bool(true, "Mostrar Medias en Chart", group=group_vis)
+show_main_table   = input.bool(true, "Mostrar Dashboard Principal", group=group_vis)
+show_mtf_table    = input.bool(true, "Mostrar Tabla MTF", group=group_vis)
+show_pm_table     = input.bool(true, "Mostrar Dashboard Premarket", group=group_vis)
+
+group_colors = "Colores Medias"
+color_asl   = input.color(#00FF00, "ASL 21", group=group_colors)
+color_fast  = input.color(#2196F3, "EMA Rápida (20)", group=group_colors)
+color_slow  = input.color(#FF9800, "EMA Lenta (50)", group=group_colors)
+color_trend = input.color(#9C27B0, "EMA Tendencia (200)", group=group_colors)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CUSTOM TYPES
+// ════════════════════════════════════════════════════════════════════════════════
+
+type MTFSignal
+    string tf_label
+    bool ema_bull
+    bool rsi_bull
+    bool macd_bull
+    bool trend_bull
+    int bull_count
+    bool is_bull
+    bool is_bear
+    string status
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SECCIÓN 1: TENDENCIA — EMAs + SUPERTREND
+// ════════════════════════════════════════════════════════════════════════════════
+
+group_trend = "Tendencia"
+ema_fast_len  = input.int(20, "EMA Rápida", minval=1, group=group_trend)
+ema_slow_len  = input.int(50, "EMA Lenta", minval=1, group=group_trend)
+ema_trend_len = input.int(200, "EMA Tendencia", minval=1, group=group_trend)
+asl_len       = input.int(21, "ASL Length", minval=1, group=group_trend)
+
+atr_len     = input.int(10, "ATR Period (Supertrend)", minval=1, group=group_trend)
+st_mult     = input.float(3.0, "Supertrend Multiplier", minval=0.5, step=0.1, group=group_trend)
+
+show_supertrend = input.bool(true, "Mostrar Supertrend", group=group_trend)
+
+// ASL 21 (Híbrido EMA + WMA)
+asl21 = (ta.ema(close, asl_len-1) + ta.wma(close, asl_len)) / 2
+asl_bull = close > asl21 and asl21 > asl21[1]
+asl_bear = close < asl21 and asl21 < asl21[1]
+asl_cross_up   = ta.crossover(close, asl21)
+asl_cross_down = ta.crossunder(close, asl21)
+asl_status = asl_cross_up ? "Cruce ↑" : asl_cross_down ? "Cruce ↓" : asl_bull ? "Alcista" : asl_bear ? "Bajista" : "Neutral"
+
+// EMAs
+e20 = ta.ema(close, ema_fast_len)
+e50 = ta.ema(close, ema_slow_len)
+e200 = ta.ema(close, ema_trend_len)
+ema_full_bull = e20 > e50 and e50 > e200
+ema_full_bear = e20 < e50 and e50 < e200
+ema_bull_trend = close > e200 and e20 > e50
+ema_bear_trend = close < e200 and e20 < e50
+ema_status = ema_full_bull ? "Fuerte ↑" : ema_full_bear ? "Fuerte ↓" : close > e200 ? "Alcista" : "Bajista"
+
+// Supertrend
+atr_val = ta.atr(atr_len)
+hl2_st = (high + low) / 2
+upper_band = hl2_st + (st_mult * atr_val)
+lower_band = hl2_st - (st_mult * atr_val)
+
+var float st_upper = na
+var float st_lower = na
+var int st_trend = 1
+var float supertrend_line = na
+
+if na(st_upper)
+    st_upper := upper_band
+    st_lower := lower_band
+
+st_upper := (upper_band < st_upper or close[1] > st_upper) ? upper_band : st_upper
+st_lower := (lower_band > st_lower or close[1] < st_lower) ? lower_band : st_lower
+
+st_trend := close > st_upper ? -1 : close < st_lower ? 1 : st_trend
+supertrend_line := st_trend == 1 ? st_upper : st_lower
+
+st_is_up = st_trend == -1
+st_is_down = st_trend == 1
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SECCIÓN 2: MOMENTUM — MACD + RSI + STOCHASTIC
+// ════════════════════════════════════════════════════════════════════════════════
+
+group_mom = "Momentum"
+rsi_len    = input.int(14, "RSI Length", minval=1, group=group_mom)
+macd_fast  = input.int(12, "MACD Fast", minval=1, group=group_mom)
+macd_slow  = input.int(26, "MACD Slow", minval=1, group=group_mom)
+macd_sig   = input.int(9, "MACD Signal", minval=1, group=group_mom)
+stoch_len  = input.int(21, "Stochastic Length", minval=1, group=group_mom)
+stoch_smooth = input.int(3, "Stochastic Smoothing", minval=1, group=group_mom)
+
+// MACD
+[macd_line, signal_line, macd_hist] = ta.macd(close, macd_fast, macd_slow, macd_sig)
+macd_bull = macd_line > signal_line
+macd_bear = macd_line < signal_line
+macd_cross_up   = ta.crossover(macd_line, signal_line)
+macd_cross_down = ta.crossunder(macd_line, signal_line)
+macd_status = macd_cross_up ? "Cruce ↑" : macd_cross_down ? "Cruce ↓" : macd_line > 0 ? "Positivo" : "Negativo"
+
+// RSI
+rsi_val = ta.rsi(close, rsi_len)
+rsi_bull = rsi_val > 50
+rsi_bear = rsi_val < 50
+rsi_status = rsi_val > 70 ? "Sobrecompra" : rsi_val < 30 ? "Sobreventa" : rsi_val > 50 ? "Alcista" : "Bajista"
+
+// Stochastic
+stoch_k = ta.sma(ta.stoch(close, high, low, stoch_len), stoch_smooth)
+stoch_d = ta.sma(stoch_k, stoch_smooth)
+stoch_bull = stoch_k > stoch_d and stoch_k < 80
+stoch_bear = stoch_k < stoch_d and stoch_k > 20
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SECCIÓN 3: VOLUMEN — VWAP + VOLUME PROFILE
+// ════════════════════════════════════════════════════════════════════════════════
+
+group_vol = "Volumen"
+show_vwap     = input.bool(true, "Mostrar VWAP", group=group_vol)
+vwap_mult1    = input.float(1.0, "VWAP Banda 1 (SD)", minval=0.5, step=0.5, group=group_vol)
+vwap_mult2    = input.float(2.0, "VWAP Banda 2 (SD)", minval=1.0, step=0.5, group=group_vol)
+vwap_anchor   = input.string("Session", "Anclaje VWAP", options=["Session", "Week", "Month"], group=group_vol)
+
+new_session = switch vwap_anchor
+    "Session" => timeframe.change("D")
+    "Week"    => timeframe.change("W")
+    "Month"   => timeframe.change("M")
+    => timeframe.change("D")
+
+vwap_reset = new_session or barstate.isfirst
+
+vwap_val = ta.vwap(hlc3, vwap_reset)
+vwap_upper1 = vwap_val + vwap_mult1 * ta.stdev(hlc3, 20)
+vwap_lower1 = vwap_val - vwap_mult1 * ta.stdev(hlc3, 20)
+vwap_upper2 = vwap_val + vwap_mult2 * ta.stdev(hlc3, 20)
+vwap_lower2 = vwap_val - vwap_mult2 * ta.stdev(hlc3, 20)
+
+vwap_bull = close > vwap_val
+vwap_bear = close < vwap_val
+
+// Volume Analysis
+vma = ta.sma(volume, 20)
+vol_ratio = volume / vma
+vol_bull = volume > vma and close > close[1]
+vol_bear = volume > vma and close < close[1]
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SECCIÓN 4: ADX (Average Directional Index)
+// ════════════════════════════════════════════════════════════════════════════════
+
+group_adx = "ADX"
+adx_len    = input.int(14, "ADX Length", minval=1, group=group_adx)
+adx_thresh = input.int(25, "Umbral Tendencia Fuerte", minval=1, maxval=100, group=group_adx)
+show_adx_panel = input.bool(false, "Mostrar Panel ADX", group=group_adx)
+
+[di_plus, di_minus, adx_val] = ta.dmi(adx_len, adx_len)
+adx_strong = adx_val >= adx_thresh
+adx_di_bull = di_plus > di_minus
+adx_cross_up   = ta.crossover(di_plus, di_minus)
+adx_cross_down = ta.crossunder(di_plus, di_minus)
+adx_status = adx_strong and adx_di_bull ? "Fuerte ↑" : adx_strong and not adx_di_bull ? "Fuerte ↓" : adx_di_bull ? "Débil ↑" : "Débil ↓"
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SECCIÓN 5: SQUEEZE MOMENTUM (Bollinger + Keltner)
+// ════════════════════════════════════════════════════════════════════════════════
+
+group_sqz = "Squeeze"
+bb_len    = input.int(20, "Bollinger Length", minval=1, group=group_sqz)
+bb_mult   = input.float(2.0, "Bollinger Multiplier", minval=0.1, step=0.1, group=group_sqz)
+kc_mult   = input.float(1.5, "Keltner Multiplier", minval=0.1, step=0.1, group=group_sqz)
+show_squeeze = input.bool(false, "Mostrar Squeeze Panel", group=group_sqz)
+
+[bb_upper, bb_lower, bb_basis] = ta.bb(close, bb_len, bb_mult)
+kc_basis = ta.ema(close, bb_len)
+kc_upper = kc_basis + kc_mult * ta.atr(bb_len)
+kc_lower = kc_basis - kc_mult * ta.atr(bb_len)
+
+squeeze_on = bb_lower > kc_lower and bb_upper < kc_upper
+squeeze_hist = close - ta.ema(close, bb_len)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SECCIÓN 6: KONCORDE INDICATORS
+// ════════════════════════════════════════════════════════════════════════════════
+
+group_kon = "Koncorde"
+kon_slow  = input.int(15, "Smoothing Period", minval=1, group=group_kon)
+mfi_len   = input.int(14, "MFI Length", minval=1, group=group_kon)
+show_koncorde = input.bool(false, "Mostrar Koncorde", group=group_kon)
+
+// MFI (Money Flow Index)
+typical = hlc3
+mf_raw = volume * typical
+mf_positive = math.sum(mf_raw * (ta.change(typical) > 0 ? 1 : 0), mfi_len)
+mf_negative = math.sum(mf_raw * (ta.change(typical) < 0 ? 1 : 0), mfi_len)
+mfi_val = mf_negative > 0 ? 100 - (100 / (1 + mf_positive / mf_negative)) : 50
+
+// Koncorde components
+boll_val = (close - ta.sma(close, 25)) / (bb_mult * ta.stdev(close, 25)) * 100
+marron = (rsi_val + mfi_val + boll_val + stoch_k) / 4
+verde = marron + (volume > vma ? 5 : -5)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SECCIÓN 7: ICHIMOKU CLOUD
+// ════════════════════════════════════════════════════════════════════════════════
+
+group_ich = "Ichimoku"
+tenkan_p  = input.int(9, "Tenkan-sen", minval=1, group=group_ich)
+kijun_p   = input.int(26, "Kijun-sen", minval=1, group=group_ich)
+senkou_p  = input.int(52, "Senkou Span B", minval=1, group=group_ich)
+displace  = input.int(26, "Displacement", minval=1, group=group_ich)
+show_ichimoku = input.bool(false, "Mostrar Nube Ichimoku", group=group_ich)
+
+tenkan  = (ta.highest(high, tenkan_p) + ta.lowest(low, tenkan_p)) / 2
+kijun   = (ta.highest(high, kijun_p) + ta.lowest(low, kijun_p)) / 2
+senkou_a = (tenkan + kijun) / 2
+senkou_b = (ta.highest(high, senkou_p) + ta.lowest(low, senkou_p)) / 2
+chikou  = close
+
+tk_cross_up   = ta.crossover(tenkan, kijun)
+tk_cross_down = ta.crossunder(tenkan, kijun)
+cloud_bull = senkou_a > senkou_b
+price_above_cloud = close > math.max(senkou_a, senkou_b)
+price_below_cloud = close < math.min(senkou_a, senkou_b)
+
+ich_status = tk_cross_up and price_above_cloud ? "Fuerte ↑" : tk_cross_up ? "TK Cross ↑" : tk_cross_down and price_below_cloud ? "Fuerte ↓" : tk_cross_down ? "TK Cross ↓" : cloud_bull ? "Nube Alcista" : "Nube Bajista"
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SECCIÓN 8: DIVERGENCIAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+group_div = "Divergencias"
+div_pivot = input.int(5, "Sensibilidad Pivotes", minval=2, maxval=10, group=group_div)
+show_div   = input.bool(false, "Mostrar Divergencias en Chart", group=group_div)
+
+pl_price = ta.pivotlow(low, div_pivot, div_pivot)
+ph_price = ta.pivothigh(high, div_pivot, div_pivot)
+
+bull_div_rsi  = false
+bear_div_rsi  = false
+bull_div_macd = false
+bear_div_macd = false
+
+var float prev_low_price = na, var int prev_low_bar = na
+var float prev_high_price = na, var int prev_high_bar = na
+
+if not na(pl_price)
+    if not na(prev_low_price)
+        if pl_price < prev_low_price and rsi_val[div_pivot] > rsi_val[div_pivot+1]
+            bull_div_rsi := true
+        if pl_price < prev_low_price and macd_hist[div_pivot] > macd_hist[div_pivot+1]
+            bull_div_macd := true
+    prev_low_price := pl_price
+    prev_low_bar := bar_index - div_pivot
+
+if not na(ph_price)
+    if not na(prev_high_price)
+        if ph_price > prev_high_price and rsi_val[div_pivot] < rsi_val[div_pivot+1]
+            bear_div_rsi := true
+        if ph_price > prev_high_price and macd_hist[div_pivot] < macd_hist[div_pivot+1]
+            bear_div_macd := true
+    prev_high_price := ph_price
+    prev_high_bar := bar_index - div_pivot
+
+div_status = bull_div_rsi or bull_div_macd ? "Alcista ↑" : bear_div_rsi or bear_div_macd ? "Bajista ↓" : "Ninguna"
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SECCIÓN 9: ANÁLISIS MULTI-TIMEFRAME (MTF)
+// ════════════════════════════════════════════════════════════════════════════════
+
+mtf_macd_delta() =>
+    [ml, sl, _] = ta.macd(close, macd_fast, macd_slow, macd_sig)
+    ml - sl
+
+tf_label(tf) =>
+    switch tf
+        "15"  => "15m"
+        "60"  => "1H"
+        "240" => "4H"
+        "D"   => "1D"
+        "W"   => "1W"
+        => tf
+
+calc_mtf(tf, label) =>
+    [e20_v, e50_v, e200_v, rsi_v, macd_d_v, close_v] = request.security(syminfo.tickerid, tf,
+        [ta.ema(close, ema_fast_len), ta.ema(close, ema_slow_len), ta.ema(close, ema_trend_len),
+         ta.rsi(close, rsi_len), mtf_macd_delta(), close], lookahead=barmerge.lookahead_off)
+    e_bull = e20_v > e50_v and e50_v > e200_v
+    r_bull = rsi_v > 50
+    m_bull = macd_d_v > 0
+    t_bull = close_v > e200_v
+    bc = (e_bull ? 1 : 0) + (r_bull ? 1 : 0) + (m_bull ? 1 : 0) + (t_bull ? 1 : 0)
+    MTFSignal.new(label, e_bull, r_bull, m_bull, t_bull, bc, bc >= 3, bc <= 1, bc >= 3 ? "Alcista" : bc <= 1 ? "Bajista" : "Neutral")
+
+mtf1 = calc_mtf("15", "15m")
+mtf2 = calc_mtf("60", "1H")
+mtf3 = calc_mtf("240", "4H")
+mtf4 = calc_mtf("D", "1D")
+mtf_total_bull = (mtf1.is_bull ? 1 : 0) + (mtf2.is_bull ? 1 : 0) + (mtf3.is_bull ? 1 : 0) + (mtf4.is_bull ? 1 : 0)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SECCIÓN 10: FUNDAMENTALES
+// ════════════════════════════════════════════════════════════════════════════════
+
+get_fin(id) =>
+    ttm = request.financial(syminfo.tickerid, id, "TTM", ignore_invalid_symbol=true)
+    fy  = request.financial(syminfo.tickerid, id, "FY", ignore_invalid_symbol=true)
+    not na(ttm) ? ttm : fy
+
+f_eps    = get_fin("EARNINGS_PER_SHARE")
+f_pe     = f_eps > 0 ? close / f_eps : na
+f_ev     = get_fin("ENTERPRISE_VALUE")
+f_eb     = get_fin("EBITDA")
+f_ev_eb  = f_eb > 0 ? f_ev / f_eb : na
+f_oi     = get_fin("OPERATING_INCOME")
+f_rv     = get_fin("TOTAL_REVENUE")
+f_mo     = f_rv != 0 ? (f_oi / f_rv) * 100 : na
+f_nd     = get_fin("NET_DEBT")
+f_de_eb  = f_eb > 0 ? f_nd / f_eb : na
+f_roic   = get_fin("RETURN_ON_INVESTED_CAPITAL")
+f_roe    = get_fin("RETURN_ON_EQUITY")
+f_fcf    = get_fin("FREE_CASH_FLOW")
+f_ni     = get_fin("NET_INCOME")
+f_shares = (not na(f_ni) and not na(f_eps) and f_eps != 0) ? f_ni / f_eps : na
+f_mktcap = (not na(f_shares) and f_shares > 0) ? f_shares * close : na
+f_fcfy   = (not na(f_mktcap) and f_mktcap > 0 and not na(f_fcf)) ? (f_fcf / f_mktcap) * 100 : na
+
+pe_ok   = not na(f_pe)    and f_pe < 25
+ev_ok   = not na(f_ev_eb) and f_ev_eb < 15
+mo_ok   = not na(f_mo)    and f_mo > 15
+de_ok   = not na(f_de_eb) and f_de_eb < 3
+ro_ok   = not na(f_roic)  and f_roic > 15
+roe_ok  = not na(f_roe)   and f_roe > 15
+fcf_ok  = not na(f_fcfy)  and f_fcfy > 4
+
+fund_count = (pe_ok ? 1 : 0) + (ev_ok ? 1 : 0) + (mo_ok ? 1 : 0) + (de_ok ? 1 : 0) + (ro_ok ? 1 : 0) + (roe_ok ? 1 : 0) + (fcf_ok ? 1 : 0)
+fund_bull = fund_count >= 4
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SECCIÓN 11: PREMARKET
+// ════════════════════════════════════════════════════════════════════════════════
+
+group_pm = "Premarket"
+pm_thresh = input.float(2.0, "Umbral Cambio %", minval=0, step=0.5, group=group_pm)
+
+prev_close = request.security(syminfo.tickerid, "D", close[1], lookahead=barmerge.lookahead_on)
+pm_change = ((close - prev_close) / prev_close) * 100
+pm_strong = math.abs(pm_change) >= pm_thresh
+
+pm_text = pm_change > pm_thresh ? "🚀 COMPRA" : pm_change < -pm_thresh ? "🔻 VENTA" : "➡️ NEUTRO"
+pm_bg = pm_change > pm_thresh ? color.new(color.green, 60) : pm_change < -pm_thresh ? color.new(color.red, 60) : color.new(color.gray, 70)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SECCIÓN 12: CONFLUENCIA FINAL
+// ════════════════════════════════════════════════════════════════════════════════
+
+trend_score  = (st_is_up ? 1 : 0) + (ema_bull_trend ? 1 : 0) + (close > vwap_val ? 1 : 0) + (adx_di_bull and adx_strong ? 1 : 0)
+mom_score    = (macd_bull ? 1 : 0) + (rsi_bull ? 1 : 0) + (stoch_bull ? 1 : 0)
+vol_score    = (vol_ratio > 1 ? 1 : 0) + (vwap_bull ? 1 : 0) + (not squeeze_on ? 1 : 0)
+
+bull_count = (asl_bull ? 1 : 0) + (st_is_up ? 1 : 0) + (macd_bull ? 1 : 0) + (rsi_bull ? 1 : 0) + (mtf_total_bull >= 2 ? 1 : 0) + (vol_bull ? 1 : 0)
+bear_count = (asl_bear ? 1 : 0) + (st_is_down ? 1 : 0) + (macd_bear ? 1 : 0) + (rsi_bear ? 1 : 0) + (mtf_total_bull <= 1 ? 1 : 0) + (vol_bear ? 1 : 0)
+
+// Filtros y Señales
+var int last_buy = -999, var int last_sell = -999
+buy_pass = (not enable_trend_filt or close > e200) and (not enable_vol_filt or volume > vma * 0.8) and (bar_index - last_buy > min_bars_between)
+is_buy = bull_count >= min_confluence and buy_pass
+is_sell = bear_count >= min_confluence and (not enable_trend_filt or close < e200) and (bar_index - last_sell > min_bars_between)
+
+if is_buy
+    last_buy := bar_index
+if is_sell
+    last_sell := bar_index
+
+// Veredicto Final
+is_master_buy  = is_buy and fund_bull and mtf_total_bull >= 2
+is_master_sell = is_sell and mtf_total_bull <= 1
+
+verdict = is_master_buy ? "🌟 MÁXIMA CONFLUENCIA" : is_buy ? "🚀 COMPRA" : is_master_sell ? "⚠️ VENTA CRÍTICA" : is_sell ? "📉 VENTA" : bull_count > bear_count ? "📊 SESGO ALCISTA" : bear_count > bull_count ? "📉 SESGO BAJISTA" : "⏸ NEUTRAL"
+verdict_bg = is_master_buy ? color.new(color.lime, 10) : is_buy ? color.new(color.green, 30) : is_master_sell ? color.new(color.red, 10) : is_sell ? color.new(color.maroon, 30) : color.new(color.gray, 70)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PLOTEO EN EL CHART
+// ════════════════════════════════════════════════════════════════════════════════
+
+plot(show_indicators ? asl21  : na, "ASL 21",  color=color_asl,   linewidth=2)
+plot(show_indicators ? e20     : na, "EMA 20",  color=color_fast,  linewidth=2)
+plot(show_indicators ? e50     : na, "EMA 50",  color=color_slow,  linewidth=2)
+plot(show_indicators ? e200    : na, "EMA 200", color=color_trend, linewidth=3)
+
+if barstate.islast and show_indicators
+    label.new(bar_index, asl21, "ASL 21", xloc=xloc.bar_index, yloc=yloc.price, color=color_asl, textcolor=color.black, style=label.style_label_left, size=size.normal)
+    label.new(bar_index, e20, "EMA 20", xloc=xloc.bar_index, yloc=yloc.price, color=color_fast, textcolor=color.white, style=label.style_label_left, size=size.normal)
+    label.new(bar_index, e50, "EMA 50", xloc=xloc.bar_index, yloc=yloc.price, color=color_slow, textcolor=color.white, style=label.style_label_left, size=size.normal)
+    label.new(bar_index, e200, "EMA 200", xloc=xloc.bar_index, yloc=yloc.price, color=color_trend, textcolor=color.white, style=label.style_label_left, size=size.normal)
+    
+    if show_supertrend
+        label.new(bar_index, supertrend_line, st_is_up ? "ST ↑" : "ST ↓", xloc=xloc.bar_index, yloc=yloc.price, color=st_is_up ? color.green : color.red, textcolor=color.white, style=label.style_label_left, size=size.normal)
+    
+    if show_vwap
+        label.new(bar_index, vwap_val, "VWAP", xloc=xloc.bar_index, yloc=yloc.price, color=color.yellow, textcolor=color.black, style=label.style_label_left, size=size.normal)
+
+st_color = st_is_up ? color.green : color.red
+plot(show_supertrend ? supertrend_line : na, "Supertrend", color=st_color, linewidth=2)
+
+plot(show_vwap ? vwap_val : na, "VWAP", color=color.yellow, linewidth=2)
+plot(show_vwap ? vwap_upper1 : na, "VWAP Upper 1", color=color.new(color.blue, 60))
+plot(show_vwap ? vwap_lower1 : na, "VWAP Lower 1", color=color.new(color.blue, 60))
+
+plotshape(is_buy,  title="COMPRA", text="COMPRA 🚀", style=shape.labelup,   location=location.belowbar, color=color.new(color.green, 50), textcolor=color.white, size=size.tiny)
+plotshape(is_sell, title="VENTA",  text="VENTA ⚠️",  style=shape.labeldown, location=location.abovebar, color=color.new(color.maroon, 50), textcolor=color.white, size=size.tiny)
+
+bull_div_signal = show_div and bull_div_rsi
+bear_div_signal = show_div and bear_div_rsi
+plotshape(bull_div_signal, title="RSI Div ↑", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 50), size=size.small)
+plotshape(bear_div_signal, title="RSI Div ↓", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 50), size=size.small)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// DASHBOARD PRINCIPAL (TOP RIGHT)
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_main_table and barstate.islast
+    var table dash = table.new(position.middle_right, 2, 30, border_width=1, border_color=color.new(color.gray, 50))
+    
+    table.cell(dash, 0, 0, "💎 ULTIMATE PRO v1.0", text_color=color.white, bgcolor=color.new(#673AB7, 10), text_size=size.normal)
+    table.merge_cells(dash, 0, 0, 1, 0)
+    
+    table.cell(dash, 0, 1, "Precio: $" + str.tostring(close, "#.##"), text_color=color.white, bgcolor=color.new(color.black, 20), text_size=size.small)
+    table.merge_cells(dash, 0, 1, 1, 1)
+    
+    table.cell(dash, 0, 2, verdict, text_color=color.white, bgcolor=verdict_bg, text_size=size.normal)
+    table.merge_cells(dash, 0, 2, 1, 2)
+
+    table.cell(dash, 0, 3, "📊 TENDENCIA (" + str.tostring(trend_score) + "/4)", text_color=color.white, bgcolor=color.new(color.blue, 40), text_size=size.small)
+    table.merge_cells(dash, 0, 3, 1, 3)
+    table.cell(dash, 0, 4, "Supertrend", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 4, st_is_up ? "↑ Alcista" : "↓ Bajista", text_color=color.white, bgcolor=st_is_up ? color.new(color.green, 60) : color.new(color.red, 60), text_size=size.small)
+    table.cell(dash, 0, 5, "EMAs", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 5, ema_status, text_color=color.white, bgcolor=ema_full_bull ? color.new(color.green, 60) : ema_full_bear ? color.new(color.red, 60) : color.new(color.gray, 70), text_size=size.small)
+    table.cell(dash, 0, 6, "VWAP", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 6, vwap_bull ? "↑ Sobre VWAP" : "↓ Bajo VWAP", text_color=color.white, bgcolor=vwap_bull ? color.new(color.green, 60) : color.new(color.red, 60), text_size=size.small)
+    table.cell(dash, 0, 7, "ADX", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 7, adx_status + " (" + str.tostring(adx_val, "#.#") + ")", text_color=color.white, bgcolor=adx_strong and adx_di_bull ? color.new(color.green, 60) : adx_strong ? color.new(color.red, 60) : color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(dash, 0, 8, "⚡ MOMENTUM (" + str.tostring(mom_score) + "/3)", text_color=color.white, bgcolor=color.new(color.orange, 40), text_size=size.small)
+    table.merge_cells(dash, 0, 8, 1, 8)
+    table.cell(dash, 0, 9, "MACD", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 9, macd_status, text_color=color.white, bgcolor=macd_bull ? color.new(color.green, 60) : color.new(color.red, 60), text_size=size.small)
+    table.cell(dash, 0, 10, "RSI", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 10, rsi_status + " (" + str.tostring(rsi_val, "#") + ")", text_color=color.white, bgcolor=rsi_bull ? color.new(color.green, 60) : color.new(color.red, 60), text_size=size.small)
+    table.cell(dash, 0, 11, "Stochastic", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 11, stoch_bull ? "K>D Alcista" : "K<D Bajista", text_color=color.white, bgcolor=stoch_bull ? color.new(color.green, 60) : color.new(color.red, 60), text_size=size.small)
+    table.cell(dash, 0, 12, "Divergencia", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 12, div_status, text_color=color.white, bgcolor=bull_div_rsi or bull_div_macd ? color.new(color.green, 60) : bear_div_rsi or bear_div_macd ? color.new(color.red, 60) : color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(dash, 0, 13, "📈 VOLUMEN (" + str.tostring(vol_score) + "/3)", text_color=color.white, bgcolor=color.new(color.purple, 40), text_size=size.small)
+    table.merge_cells(dash, 0, 13, 1, 13)
+    table.cell(dash, 0, 14, "Vol/MA", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 14, str.tostring(vol_ratio, "#.##") + "x", text_color=color.white, bgcolor=vol_ratio > 1 ? color.new(color.green, 60) : color.new(color.red, 60), text_size=size.small)
+    table.cell(dash, 0, 15, "Squeeze", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 15, squeeze_on ? "ON (Consolidación)" : "OFF (Expansión)", text_color=color.white, bgcolor=squeeze_on ? color.new(color.yellow, 60) : color.new(color.green, 60), text_size=size.small)
+
+    table.cell(dash, 0, 16, "🏢 FUNDAMENTAL (" + str.tostring(fund_count) + "/7)", text_color=color.white, bgcolor=color.new(color.teal, 40), text_size=size.small)
+    table.merge_cells(dash, 0, 16, 1, 16)
+    table.cell(dash, 0, 17, "P/E", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 17, na(f_pe) ? "N/D" : str.tostring(f_pe, "#.##"), text_color=color.white, bgcolor=pe_ok ? color.new(color.green, 60) : color.new(color.gray, 70), text_size=size.small)
+    table.cell(dash, 0, 18, "EV/EBITDA", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 18, na(f_ev_eb) ? "N/D" : str.tostring(f_ev_eb, "#.##"), text_color=color.white, bgcolor=ev_ok ? color.new(color.green, 60) : color.new(color.gray, 70), text_size=size.small)
+    table.cell(dash, 0, 19, "Margen Op.", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 19, na(f_mo) ? "N/D" : str.tostring(f_mo, "#.##") + "%", text_color=color.white, bgcolor=mo_ok ? color.new(color.green, 60) : color.new(color.gray, 70), text_size=size.small)
+    table.cell(dash, 0, 20, "Deuda/EBITDA", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 20, na(f_de_eb) ? "N/D" : str.tostring(f_de_eb, "#.##"), text_color=color.white, bgcolor=de_ok ? color.new(color.green, 60) : color.new(color.gray, 70), text_size=size.small)
+    table.cell(dash, 0, 21, "ROIC %", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 21, na(f_roic) ? "N/D" : str.tostring(f_roic, "#.##") + "%", text_color=color.white, bgcolor=ro_ok ? color.new(color.green, 60) : color.new(color.gray, 70), text_size=size.small)
+    table.cell(dash, 0, 22, "FCF Yield", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 22, na(f_fcfy) ? "N/D" : str.tostring(f_fcfy, "#.##") + "%", text_color=color.white, bgcolor=fcf_ok ? color.new(color.green, 60) : color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(dash, 0, 23, "🕐 MTF (" + str.tostring(mtf_total_bull) + "/4 Alcistas)", text_color=color.white, bgcolor=color.new(color.navy, 40), text_size=size.small)
+    table.merge_cells(dash, 0, 23, 1, 23)
+    table.cell(dash, 0, 24, "15m/1H/4H/D", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    mtf_status = mtf_total_bull >= 3 ? "Confluencia Alcista" : mtf_total_bull >= 2 ? "Sesgo Alcista" : mtf_total_bull >= 1 ? "Sesgo Bajista" : "Confluencia Bajista"
+    table.cell(dash, 1, 24, mtf_status, text_color=color.white, bgcolor=mtf_total_bull >= 2 ? color.new(color.green, 60) : color.new(color.red, 60), text_size=size.small)
+
+    table.cell(dash, 0, 25, "📊 CONFLUENCIA", text_color=color.white, bgcolor=color.new(color.blue, 30), text_size=size.small)
+    table.merge_cells(dash, 0, 25, 1, 25)
+    table.cell(dash, 0, 26, "Alcistas/Bajistas", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(dash, 1, 26, str.tostring(bull_count) + " ↑ / " + str.tostring(bear_count) + " ↓", text_color=color.white, bgcolor=bull_count > bear_count ? color.new(color.green, 60) : color.new(color.red, 60), text_size=size.small)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// TABLA MTF (BOTTOM CENTER)
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_mtf_table and barstate.islast
+    var table mtf_t = table.new(position.bottom_center, 6, 6, border_width=1, border_color=color.gray)
+    table.cell(mtf_t, 0, 0, "🕐 CONFLUENCIA MTF", text_color=color.white, bgcolor=color.new(color.navy, 20), text_size=size.small)
+    table.merge_cells(mtf_t, 0, 0, 5, 0)
+    
+    table.cell(mtf_t, 0, 1, "TF", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(mtf_t, 1, 1, "EMA", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(mtf_t, 2, 1, "RSI", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(mtf_t, 3, 1, "MACD", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(mtf_t, 4, 1, "Trend", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(mtf_t, 5, 1, "Status", text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    
+    for [i, mtf] in array.from(mtf1, mtf2, mtf3, mtf4)
+        bg = mtf.is_bull ? color.new(color.green, 60) : mtf.is_bear ? color.new(color.red, 60) : color.new(color.gray, 70)
+        table.cell(mtf_t, 0, i + 2, mtf.tf_label, text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+        table.cell(mtf_t, 1, i + 2, mtf.ema_bull ? "🟢" : "🔴")
+        table.cell(mtf_t, 2, i + 2, mtf.rsi_bull ? "🟢" : "🔴")
+        table.cell(mtf_t, 3, i + 2, mtf.macd_bull ? "🟢" : "🔴")
+        table.cell(mtf_t, 4, i + 2, mtf.trend_bull ? "🟢" : "🔴")
+        table.cell(mtf_t, 5, i + 2, mtf.status, text_color=color.white, bgcolor=bg, text_size=size.small)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// TABLA PREMARKET (MIDDLE LEFT)
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_pm_table and barstate.islast
+    var table pm = table.new(position.middle_left, 2, 5, border_width=1, border_color=color.gray)
+    table.cell(pm, 0, 0, "📊 PREMARKET", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
+    table.merge_cells(pm, 0, 0, 1, 0)
+    
+    table.cell(pm, 0, 1, "Cambio %", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(pm, 1, 1, str.tostring(pm_change, "#.##") + "%", text_color=color.white, bgcolor=pm_bg, text_size=size.small)
+    
+    table.cell(pm, 0, 2, "Vol Ratio", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(pm, 1, 2, str.tostring(vol_ratio, "#.##") + "x", text_color=color.white, bgcolor=vol_ratio > 1.5 ? color.new(color.green, 60) : color.new(color.gray, 70), text_size=size.small)
+    
+    table.cell(pm, 0, 3, "Señal PM", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(pm, 1, 3, pm_text, text_color=color.white, bgcolor=pm_bg, text_size=size.small)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ALERTAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+alertcondition(is_buy, "Ultimate Pro - Compra", "🔥 ULTIMATE PRO: Señal de COMPRA detectada - Confluencia alcista activa")
+alertcondition(is_sell, "Ultimate Pro - Venta", "⚠️ ULTIMATE PRO: Señal de VENTA detectada - Confluencia bajista activa")
+alertcondition(is_master_buy, "Ultimate Pro - Máxima Confluencia", "🌟 ULTIMATE PRO: MÁXIMA CONFLUENCIA - Técnica + Fundamental + MTF alineados")
+alertcondition(st_is_up and not st_is_up[1], "Supertrend - Cambio Alcista", "Supertrend cambió a tendencia ALCISTA")
+alertcondition(st_is_down and not st_is_down[1], "Supertrend - Cambio Bajista", "Supertrend cambió a tendencia BAJISTA")
+alertcondition(bull_div_rsi, "Divergencia RSI Alcista", "Divergencia ALCISTA detectada en RSI")
+alertcondition(bear_div_rsi, "Divergencia RSI Bajista", "Divergencia BAJISTA detectada en RSI")

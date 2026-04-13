@@ -1,0 +1,231 @@
+//@version=6
+//© Diego Santacruz
+indicator(title="IndicadorPro v20 — Full Unified Dashboard", shorttitle="IndPro v20", overlay=true, max_lines_count=200, max_labels_count=200)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CONFIGURACIÓN
+// ════════════════════════════════════════════════════════════════════════════════
+group_sys = "Sistema y Filtros"
+min_confluence    = input.int(4, "Confluencia Mínima (de 6)", minval=3, maxval=6, group=group_sys)
+min_score         = input.int(70, "Score Mínimo (%)", minval=60, maxval=90, group=group_sys)
+enable_trend_filt = input.bool(true, "Filtro de Tendencia (EMA 200)", group=group_sys)
+enable_vol_filt   = input.bool(true, "Filtro de Volumen (>80% MA)", group=group_sys)
+min_bars_between  = input.int(5, "Barras Entre Señales", minval=1, group=group_sys)
+
+group_vis = "Visualización"
+show_indicators   = input.bool(true, "Mostrar Medias en Chart", group=group_vis)
+show_main_table   = input.bool(true, "Mostrar Dashboard Derecho", group=group_vis)
+show_pm_table     = input.bool(true, "Mostrar Dashboard Premarket (Izquierda)", group=group_vis)
+show_mtf_table    = input.bool(true, "Mostrar Tabla MTF (Abajo)", group=group_vis)
+
+group_color = "Colores Medias"
+color_asl   = input.color(#00FF00, "ASL 21",            group=group_color)
+color_fast  = input.color(#2196F3, "EMA Rápida (20)",   group=group_color)
+color_slow  = input.color(#FF9800, "EMA Lenta (50)",    group=group_color)
+color_trend = input.color(#9C27B0, "EMA Tendencia (200)", group=group_color)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CUSTOM TYPES
+// ════════════════════════════════════════════════════════════════════════════════
+type MTFSignal
+    string tf_label
+    bool ema_bull
+    bool rsi_bull
+    bool macd_bull
+    bool trend_bull
+    int bull_count
+    bool is_bull
+    bool is_bear
+    string status
+
+// ════════════════════════════════════════════════════════════════════════════════
+// FUNCIONES GLOBALES (DIBUJO)
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Función para filas técnicas
+draw_t_row(t, r, label, val, bull) =>
+    table.cell(t, 0, r, label, text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 80))
+    table.cell(t, 1, r, val, text_color=color.white, text_size=size.small, bgcolor=bull ? color.new(color.green, 60) : color.new(color.red, 60))
+
+// Función para filas fundamentales
+draw_f_row(t, r, label, val, bull) =>
+    table.cell(t, 0, r, label, text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 80))
+    table.cell(t, 1, r, val, text_color=color.white, text_size=size.small, bgcolor=bull ? color.new(color.teal, 60) : color.new(color.maroon, 60))
+
+// Función para filas MTF
+draw_mtf_row(tbl, s, r) =>
+    bg = s.is_bull ? color.new(color.green, 60) : s.is_bear ? color.new(color.red, 60) : color.new(color.gray, 70)
+    table.cell(tbl, 0, r, s.tf_label, text_color=color.white, bgcolor=color.new(color.gray, 50), text_size=size.small)
+    table.cell(tbl, 1, r, s.ema_bull ? "🟢" : "🔴")
+    table.cell(tbl, 2, r, s.rsi_bull ? "🟢" : "🔴")
+    table.cell(tbl, 3, r, s.macd_bull ? "🟢" : "🔴")
+    table.cell(tbl, 4, r, s.trend_bull ? "🟢" : "🔴")
+    table.cell(tbl, 5, r, s.status, text_color=color.white, bgcolor=bg, text_size=size.small)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// LÓGICA TÉCNICA
+// ════════════════════════════════════════════════════════════════════════════════
+ema_fast = 20, ema_slow = 50, ema_trend = 200, asl_len = 21, rsi_len = 14, m_fast = 12, m_slow = 26, m_sig = 9
+
+// ASL 21
+asl21 = (ta.ema(close, asl_len-1) + ta.wma(close, asl_len)) / 2
+asl_bull = close > asl21 and asl21 > asl21[1]
+asl_bear = close < asl21 and asl21 < asl21[1]
+asl_c_up = ta.crossover(close, asl21), asl_c_down = ta.crossunder(close, asl21)
+asl_status = asl_c_up ? "Cruce ↑" : asl_c_down ? "Cruce ↓" : asl_bull ? "Alcista" : asl_bear ? "Bajista" : "Neutral"
+
+// EMAs
+e20 = ta.ema(close, ema_fast), e50 = ta.ema(close, ema_slow), e200 = ta.ema(close, ema_trend)
+ema_bull = e20 > e50 and close > e200
+ema_bear = e20 < e50 and close < e200
+ema_status = e20 > e50 and e50 > e200 ? "Fuerte ↑" : e20 < e50 and e50 < e200 ? "Fuerte ↓" : close > e200 ? "Alcista" : "Bajista"
+
+// MACD
+[ml, sl, hist] = ta.macd(close, m_fast, m_slow, m_sig)
+macd_bull = ml > sl, macd_bear = ml < sl
+m_c_up = ta.crossover(ml, sl), m_c_down = ta.crossunder(ml, sl)
+macd_status = m_c_up ? "Cruce ↑" : m_c_down ? "Cruce ↓" : ml > 0 ? "Positivo" : "Negativo"
+
+// RSI
+rsi_val = ta.rsi(close, rsi_len)
+rsi_bull = rsi_val > 50, rsi_bear = rsi_val < 50
+rsi_status = rsi_val > 70 ? "Sobrecompra" : rsi_val < 30 ? "Sobreventa" : rsi_val > 50 ? "Alcista" : "Bajista"
+
+// Volume & Momentum
+vma = ta.sma(volume, 20), roc = ta.roc(close, 10)
+vol_bull = volume > vma and close > close[1], vol_bear = volume > vma and close < close[1]
+mom_bull = roc > 0, mom_bear = roc < 0
+vm_status = vol_bull and mom_bull ? "Fuerte ↑" : vol_bear and mom_bear ? "Fuerte ↓" : "Neutral"
+
+// Divergencias
+div_pivot_len = 5
+pl = ta.pivotlow(low, div_pivot_len, div_pivot_len), ph = ta.pivothigh(high, div_pivot_len, div_pivot_len)
+bull_div_rsi = not na(pl) and low[div_pivot_len] < low[div_pivot_len+1] and rsi_val[div_pivot_len] > rsi_val[div_pivot_len+1]
+bear_div_rsi = not na(ph) and high[div_pivot_len] > high[div_pivot_len+1] and rsi_val[div_pivot_len] < rsi_val[div_pivot_len+1]
+
+// Score Final
+bull_c = (asl_bull ? 1 : 0) + (ema_bull ? 1 : 0) + (macd_bull ? 1 : 0) + (rsi_bull ? 1 : 0) + (vol_bull ? 1 : 0) + (mom_bull ? 1 : 0)
+bear_c = (asl_bear ? 1 : 0) + (ema_bear ? 1 : 0) + (macd_bear ? 1 : 0) + (rsi_bear ? 1 : 0) + (vol_bear ? 1 : 0) + (mom_bear ? 1 : 0)
+
+// Filtros y Señales
+var int last_buy = -999, var int last_sell = -999
+buy_pass = (not enable_trend_filt or close > e200) and (not enable_vol_filt or volume > vma * 0.8) and (bar_index - last_buy > min_bars_between)
+is_buy = bull_c >= min_confluence and buy_pass
+is_sell = bear_c >= min_confluence and (not enable_trend_filt or close < e200) and (bar_index - last_sell > min_bars_between)
+if is_buy
+    last_buy := bar_index
+if is_sell
+    last_sell := bar_index
+
+// ════════════════════════════════════════════════════════════════════════════════
+// LÓGICA FUNDAMENTAL
+// ════════════════════════════════════════════════════════════════════════════════
+get_fin(id) => 
+    ttm = request.financial(syminfo.tickerid, id, "TTM", ignore_invalid_symbol=true)
+    fy  = request.financial(syminfo.tickerid, id, "FY",  ignore_invalid_symbol=true)
+    not na(ttm) ? ttm : fy
+
+f_eps  = get_fin("EARNINGS_PER_SHARE")
+f_pe   = f_eps > 0 ? close / f_eps : na
+f_ev   = get_fin("ENTERPRISE_VALUE")
+f_eb   = get_fin("EBITDA")
+f_ev_eb = f_eb > 0 ? f_ev / f_eb : na
+f_oi   = get_fin("OPERATING_INCOME")
+f_rv   = get_fin("TOTAL_REVENUE")
+f_mo   = f_rv != 0 ? (f_oi / f_rv) * 100 : na
+f_nd   = get_fin("NET_DEBT")
+f_de_eb = f_eb > 0 ? f_nd / f_eb : na
+f_roic = get_fin("RETURN_ON_INVESTED_CAPITAL")
+f_roe  = get_fin("RETURN_ON_EQUITY")
+f_fcf  = get_fin("FREE_CASH_FLOW")
+f_ni   = get_fin("NET_INCOME")
+f_shares = (not na(f_ni) and not na(f_eps) and f_eps != 0) ? f_ni / f_eps : na
+f_mktcap = (not na(f_shares) and f_shares > 0) ? f_shares * close : na
+f_fcfy = (not na(f_mktcap) and f_mktcap > 0 and not na(f_fcf)) ? (f_fcf / f_mktcap) * 100 : na
+
+fund_bull_count = (f_pe < 25 ? 1 : 0) + (f_ev_eb < 15 ? 1 : 0) + (f_mo > 15 ? 1 : 0) + (f_de_eb < 3 ? 1 : 0) + (f_roic > 15 ? 1 : 0) + (f_roe > 15 ? 1 : 0) + (f_fcfy > 4 ? 1 : 0)
+fund_bull = fund_bull_count >= 4
+
+// ════════════════════════════════════════════════════════════════════════════════
+// LÓGICA MTF
+// ════════════════════════════════════════════════════════════════════════════════
+calc_mtf(tf, label) =>
+    [e20_v, e50_v, e200_v, rsi_v, ml_v, sl_v, close_v] = request.security(syminfo.tickerid, tf, [ta.ema(close, 20), ta.ema(close, 50), ta.ema(close, 200), ta.rsi(close, 14), ml, sl, close])
+    e_bull = e20_v > e50_v and e50_v > e200_v
+    r_bull = rsi_v > 50
+    m_bull = ml_v > sl_v
+    t_bull = close_v > e200_v
+    bc = (e_bull ? 1 : 0) + (r_bull ? 1 : 0) + (m_bull ? 1 : 0) + (t_bull ? 1 : 0)
+    MTFSignal.new(label, e_bull, r_bull, m_bull, t_bull, bc, bc >= 3, bc <= 1, bc >= 3 ? "Alcista" : bc <= 1 ? "Bajista" : "Neutral")
+
+mtf1 = calc_mtf("15", "15m"), mtf2 = calc_mtf("60", "1H"), mtf3 = calc_mtf("240", "4H"), mtf4 = calc_mtf("D", "1D")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// DASHBOARDS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// DERECHO UNIFICADO
+if show_main_table and barstate.islast
+    var table d = table.new(position.top_right, 2, 25, border_width=1, border_color=color.new(color.gray, 50))
+    table.cell(d, 0, 0, "💎 INDICADOR PRO v20", text_color=color.white, bgcolor=color.new(#673AB7, 10))
+    table.merge_cells(d, 0, 0, 1, 0)
+    table.cell(d, 0, 1, "Precio: $" + str.tostring(close, "#.##"), text_color=color.white, bgcolor=color.new(color.black, 20), text_size=size.small)
+    table.merge_cells(d, 0, 1, 1, 1)
+
+    m_text = is_buy and fund_bull ? "🌟 CONFLUENCIA MÁXIMA" : is_buy ? "🚀 COMPRA TÉCNICA" : is_sell ? "⚠️ VENTA CRÍTICA" : "⏸ SIN SEÑAL"
+    m_bg   = is_buy and fund_bull ? color.new(color.lime, 10) : is_buy ? color.new(color.green, 30) : is_sell ? color.new(color.red, 30) : color.new(color.gray, 70)
+    table.cell(d, 0, 2, m_text, text_color=color.white, bgcolor=m_bg, text_size=size.normal)
+    table.merge_cells(d, 0, 2, 1, 2)
+
+    table.cell(d, 0, 3, "📊 TÉCNICA (" + str.tostring(bull_c) + "/6)", text_color=color.white, bgcolor=color.new(color.blue, 40), text_size=size.small)
+    table.merge_cells(d, 0, 3, 1, 3)
+    draw_t_row(d, 4, "ASL 21", asl_status, asl_bull)
+    draw_t_row(d, 5, "EMAs Alignment", ema_status, ema_bull)
+    draw_t_row(d, 6, "MACD Momentum", macd_status, macd_bull)
+    draw_t_row(d, 7, "RSI Fuerza", rsi_status, rsi_bull)
+    draw_t_row(d, 8, "Vol/Momentum", vm_status, vol_bull)
+    draw_t_row(d, 9, "Divergencia RSI", bull_div_rsi ? "ALCISTA ↑" : bear_div_rsi ? "BAJISTA ↓" : "Ninguna", bull_div_rsi)
+
+    table.cell(d, 0, 10, "🏢 FUNDAMENTAL (" + str.tostring(fund_bull_count) + "/7)", text_color=color.white, bgcolor=color.new(color.orange, 30), text_size=size.small)
+    table.merge_cells(d, 0, 10, 1, 10)
+    draw_f_row(d, 11, "P/E Ratio", na(f_pe) ? "N/D" : str.tostring(f_pe, "#.##"), f_pe < 25)
+    draw_f_row(d, 12, "EV / EBITDA", na(f_ev_eb) ? "N/D" : str.tostring(f_ev_eb, "#.##"), f_ev_eb < 15)
+    draw_f_row(d, 13, "Margen Op.", na(f_mo) ? "N/D" : str.tostring(f_mo, "#.##") + "%", f_mo > 15)
+    draw_f_row(d, 14, "Deuda / EBITDA", na(f_de_eb) ? "N/D" : str.tostring(f_de_eb, "#.##"), f_de_eb < 3)
+    draw_f_row(d, 15, "ROIC %", na(f_roic) ? "N/D" : str.tostring(f_roic, "#.##") + "%", f_roic > 15)
+    draw_f_row(d, 16, "FCF Yield %", na(f_fcfy) ? "N/D" : str.tostring(f_fcfy, "#.##") + "%", f_fcfy > 4)
+    draw_f_row(d, 17, "ROE %", na(f_roe) ? "N/D" : str.tostring(f_roe, "#.##") + "%", f_roe > 15)
+
+// PREMARKET (IZQUIERDA)
+if show_pm_table and barstate.islast
+    var table pm = table.new(position.middle_left, 2, 5, border_width=1, border_color=color.gray)
+    table.cell(pm, 0, 0, "📊 PREMARKET", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
+    table.merge_cells(pm, 0, 0, 1, 0)
+    prev_c = request.security(syminfo.tickerid, "D", close[1], lookahead=barmerge.lookahead_on)
+    pm_ch = ((close - prev_c) / prev_c) * 100
+    table.cell(pm, 0, 1, "Cambio %", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(pm, 1, 1, str.tostring(pm_ch, "#.##") + "%", text_color=color.white, bgcolor=pm_ch > 0 ? color.new(color.green, 50) : color.new(color.red, 50), text_size=size.small)
+    vr = vma != 0 ? volume / vma : 0
+    table.cell(pm, 0, 2, "Vol Ratio", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(pm, 1, 2, str.tostring(vr, "#.##") + "x", text_color=color.white, bgcolor=vr > 1.5 ? color.new(color.green, 60) : color.new(color.gray, 70), text_size=size.small)
+
+// MTF (ABAJO)
+if show_mtf_table and barstate.islast
+    var table mtf_t = table.new(position.bottom_center, 6, 6, border_width=1, border_color=color.gray)
+    table.cell(mtf_t, 0, 0, "🕐 CONFLUENCIA MTF", text_color=color.white, bgcolor=color.new(color.navy, 20), text_size=size.small)
+    table.merge_cells(mtf_t, 0, 0, 5, 0)
+    draw_mtf_row(mtf_t, mtf1, 2)
+    draw_mtf_row(mtf_t, mtf2, 3)
+    draw_mtf_row(mtf_t, mtf3, 4)
+    draw_mtf_row(mtf_t, mtf4, 5)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PLOTEO CHART & SEÑALES
+// ════════════════════════════════════════════════════════════════════════════════
+plot(show_indicators ? asl21 : na, "ASL 21",  color=color_asl,   linewidth=2)
+plot(show_indicators ? e20   : na, "EMA 20",  color=color_fast,  linewidth=2)
+plot(show_indicators ? e50   : na, "EMA 50",  color=color_slow,  linewidth=2)
+plot(show_indicators ? e200  : na, "EMA 200", color=color_trend, linewidth=3)
+
+plotshape(is_buy,  title="COMPRA", text="COMPRA 🚀", style=shape.labelup,   location=location.belowbar, color=color.new(color.green, 50), textcolor=color.white, size=size.tiny)
+plotshape(is_sell, title="VENTA",  text="VENTA ⚠️",   style=shape.labeldown, location=location.abovebar, color=color.new(color.maroon, 50), textcolor=color.white, size=size.tiny)
