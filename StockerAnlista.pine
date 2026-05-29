@@ -1,0 +1,367 @@
+//@version=6
+//© Diego Santacruz
+indicator("PAIN·01 — Stocker Analyst", shorttitle="PAIN·01", overlay=true,
+     max_lines_count=50, max_labels_count=50)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// PAIN·01 — Analista CEDEARs Stocker
+// Score 0-10 │ ≥7 BARATA · COMPRAR  │  5-7 FAIR VALUE · MANTENER  │  <5 CARA · VENDER
+// 5 Dimensiones × 2 pts = 10 pts máx
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ─── CONFIGURACIÓN ────────────────────────────────────────────────────────────
+g_sys = "Sistema"
+sector_in  = input.string("Auto", "Sector",
+     options=["Auto", "Tech/Software", "Fintech/EM", "Consumer Staples",
+              "Financial/Bank", "Industrials", "Healthcare", "Semiconductores", "ETF S&P 500"],
+     group=g_sys)
+show_panel = input.bool(true, "Mostrar Panel",  group=g_sys)
+show_mas   = input.bool(true, "Mostrar MAs",    group=g_sys)
+
+g_tech = "Técnicos"
+len_fast = input.int(50,  "EMA Rápida",   minval=1, group=g_tech)
+len_slow = input.int(200, "EMA Lenta",    minval=1, group=g_tech)
+len_rsi  = input.int(14,  "RSI Período",  minval=1, group=g_tech)
+
+// ─── HELPER FINANCIERO ────────────────────────────────────────────────────────
+get_fin(id) =>
+    ttm = request.financial(syminfo.tickerid, id, "TTM", gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+    fy  = request.financial(syminfo.tickerid, id, "FY",  gaps=barmerge.gaps_off, ignore_invalid_symbol=true)
+    not na(ttm) ? ttm : fy
+
+// ─── DATOS FINANCIEROS ────────────────────────────────────────────────────────
+f_eps  = get_fin("EARNINGS_PER_SHARE")
+f_ev   = get_fin("ENTERPRISE_VALUE")
+f_eb   = get_fin("EBITDA")
+f_oi   = get_fin("OPERATING_INCOME")
+f_rv   = get_fin("TOTAL_REVENUE")
+f_nd   = get_fin("NET_DEBT")
+f_roic = get_fin("RETURN_ON_INVESTED_CAPITAL")
+f_roe  = get_fin("RETURN_ON_EQUITY")
+f_fcf  = get_fin("FREE_CASH_FLOW")
+f_ni   = get_fin("NET_INCOME")
+
+f_pe    = (not na(f_eps) and f_eps > 0) ? close / f_eps : na
+f_ev_eb = (not na(f_ev) and not na(f_eb) and f_eb > 0) ? f_ev / f_eb : na
+f_mo    = (not na(f_oi) and not na(f_rv) and f_rv != 0) ? (f_oi / f_rv) * 100 : na
+f_de_eb = (not na(f_nd) and not na(f_eb) and f_eb > 0) ? f_nd / f_eb : na
+
+f_shares = (not na(f_ni) and not na(f_eps) and f_eps != 0) ? f_ni / f_eps : na
+f_mktcap = (not na(f_shares) and f_shares > 0) ? f_shares * close : na
+f_fcfy   = (not na(f_fcf) and not na(f_mktcap) and f_mktcap > 0) ? (f_fcf / f_mktcap) * 100 : na
+
+// ─── DETECCIÓN Y UMBRALES DE SECTOR ──────────────────────────────────────────
+is_tech = syminfo.sector == "Technology Services" or syminfo.sector == "Electronic Technology"
+is_bank = syminfo.sector == "Finance"
+is_semi = str.contains(str.lower(syminfo.industry), "semiconductor")
+
+auto_sec = is_semi ? "Semiconductores" : is_tech ? "Tech/Software" : is_bank ? "Financial/Bank" : "Consumer Staples"
+sec      = sector_in == "Auto" ? auto_sec : sector_in
+
+// Umbrales P/E por sector (tabla SKILL.md)
+pe_justo = switch sec
+    "Tech/Software"    => 30.0
+    "Fintech/EM"       => 20.0
+    "Consumer Staples" => 23.0
+    "Financial/Bank"   => 12.5
+    "Industrials"      => 18.5
+    "Healthcare"       => 21.5
+    "Semiconductores"  => 27.5
+    "ETF S&P 500"      => 19.5
+    => 22.0
+
+pe_barato = switch sec
+    "Tech/Software"    => 20.0
+    "Fintech/EM"       => 12.0
+    "Consumer Staples" => 16.0
+    "Financial/Bank"   =>  8.0
+    "Industrials"      => 13.0
+    "Healthcare"       => 15.0
+    "Semiconductores"  => 18.0
+    "ETF S&P 500"      => 16.0
+    => 14.0
+
+pe_caro = switch sec
+    "Tech/Software"    => 45.0
+    "Fintech/EM"       => 35.0
+    "Consumer Staples" => 30.0
+    "Financial/Bank"   => 20.0
+    "Industrials"      => 30.0
+    "Healthcare"       => 35.0
+    "Semiconductores"  => 50.0
+    "ETF S&P 500"      => 25.0
+    => 35.0
+
+ev_ref = switch sec
+    "Tech/Software"    => 20.0
+    "Financial/Bank"   =>  8.0
+    "Industrials"      => 12.0
+    => 15.0
+
+mo_exc = switch sec
+    "Tech/Software"    => 30.0
+    "Financial/Bank"   => 25.0
+    => 12.0
+
+mo_ok = switch sec
+    "Tech/Software"    => 15.0
+    "Financial/Bank"   => 12.0
+    => 4.0
+
+// ─── TÉCNICOS ─────────────────────────────────────────────────────────────────
+ema_fast = ta.ema(close, len_fast)
+ema_slow = ta.ema(close, len_slow)
+rsi_val  = ta.rsi(close, len_rsi)
+atr_pct  = ta.atr(14) / close * 100
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SCORING — 5 dimensiones × máx 2 pts = 10 pts
+// ════════════════════════════════════════════════════════════════════════════════
+
+// DIM 1 · Valuación (P/E + EV/EBITDA)
+float sc1a = na(f_pe) ? 0.75 : f_pe < pe_barato ? 1.25 : f_pe < pe_justo ? 0.75 : f_pe < pe_caro ? 0.25 : 0.0
+float sc1b = na(f_ev_eb) ? 0.75 : f_ev_eb < ev_ref * 0.7 ? 0.75 : f_ev_eb < ev_ref ? 0.5 : f_ev_eb < ev_ref * 1.5 ? 0.25 : 0.0
+float sc_dim1 = math.min(sc1a + sc1b, 2.0)
+
+// DIM 2 · Calidad Ganancias (FCF Yield + ROE)
+float sc2a = na(f_fcfy) ? 0.75 : f_fcfy > 6.0 ? 1.0 : f_fcfy > 3.0 ? 0.6 : f_fcfy > 0.0 ? 0.3 : 0.0
+float sc2b = na(f_roe)  ? 0.75 : f_roe  > 20.0 ? 1.0 : f_roe  > 12.0 ? 0.6 : f_roe  > 0.0 ? 0.2 : 0.0
+float sc_dim2 = math.min(sc2a + sc2b, 2.0)
+
+// DIM 3 · Salud Financiera (Deuda/EBITDA + Margen Op.)
+float sc3a = na(f_de_eb) ? 0.75 : f_de_eb < 1.5 ? 1.0 : f_de_eb < 3.0 ? 0.6 : f_de_eb < 5.0 ? 0.2 : 0.0
+float sc3b = na(f_mo)    ? 0.75 : f_mo > mo_exc ? 1.0 : f_mo > mo_ok ? 0.5 : f_mo > 0.0 ? 0.1 : 0.0
+float sc_dim3 = math.min(sc3a + sc3b, 2.0)
+
+// DIM 4 · Riesgo & Retorno (ROIC + Volatilidad)
+float sc4a = na(f_roic) ? 0.75 : f_roic > 25.0 ? 1.0 : f_roic > 15.0 ? 0.7 : f_roic > 10.0 ? 0.4 : f_roic > 0.0 ? 0.1 : 0.0
+float sc4b = atr_pct < 1.5 ? 1.0 : atr_pct < 3.0 ? 0.7 : atr_pct < 5.0 ? 0.4 : 0.1
+float sc_dim4 = math.min(sc4a + sc4b, 2.0)
+
+// DIM 5 · Técnico (Tendencia EMA + Momentum RSI)
+float sc5a = close > ema_fast and close > ema_slow ? 1.0 : close > ema_slow ? 0.6 : close > ema_fast ? 0.3 : 0.0
+float sc5b = rsi_val > 70 ? 0.4 : rsi_val > 55 ? 1.0 : rsi_val > 45 ? 0.6 : rsi_val > 30 ? 0.3 : 0.1
+float sc_dim5 = math.min(sc5a + sc5b, 2.0)
+
+float score = sc_dim1 + sc_dim2 + sc_dim3 + sc_dim4 + sc_dim5
+
+// ─── VEREDICTO ────────────────────────────────────────────────────────────────
+bool is_barata = score >= 7.0
+bool is_cara   = score < 5.0
+
+verdict_txt  = is_barata ? "BARATA — COMPRAR"         : not is_cara ? "FAIR VALUE — MANTENER" : "CARA — VENDER/REDUCIR"
+verdict_icon = is_barata ? "🟢" : not is_cara ? "🟡" : "🔴"
+peso_txt     = score >= 7.0 and not na(f_roic) and f_roic > 15.0 ? "10-20%" :
+     score >= 7.0 ? "8-15%" : score >= 5.0 ? "5-10%" : "0-5%"
+
+verdict_bg = is_barata ? color.new(#00C853, 15) : not is_cara ? color.new(#F9A825, 15) : color.new(#C62828, 15)
+
+// ─── HELPERS DE COLOR ─────────────────────────────────────────────────────────
+dim_col(sc) =>
+    sc >= 1.6 ? color.new(#00C853, 45) : sc >= 1.0 ? color.new(#F9A825, 45) : color.new(#C62828, 45)
+
+traffic(v, good, warn) =>
+    na(v) ? color.new(color.gray, 60) : v >= good ? color.new(#00C853, 45) : v >= warn ? color.new(#F9A825, 45) : color.new(#C62828, 45)
+
+traffic_inv(v, warn, bad) =>
+    na(v) ? color.new(color.gray, 60) : v <= warn ? color.new(#00C853, 45) : v <= bad ? color.new(#F9A825, 45) : color.new(#C62828, 45)
+
+// ─── PLOTS ────────────────────────────────────────────────────────────────────
+plot(show_mas ? ema_fast : na, "EMA Rápida", color=color.new(#2196F3, 0), linewidth=2)
+plot(show_mas ? ema_slow : na, "EMA Lenta",  color=color.new(#FF9800, 0), linewidth=3)
+
+if barstate.islast and show_mas
+    label.new(bar_index + 1, ema_fast, "EMA " + str.tostring(len_fast),
+         xloc=xloc.bar_index, yloc=yloc.price,
+         color=color.new(#2196F3, 30), textcolor=color.white,
+         style=label.style_label_left, size=size.small)
+    label.new(bar_index + 1, ema_slow, "EMA " + str.tostring(len_slow),
+         xloc=xloc.bar_index, yloc=yloc.price,
+         color=color.new(#FF9800, 30), textcolor=color.white,
+         style=label.style_label_left, size=size.small)
+
+// ─── LABEL FLOTANTE: Score en la vela actual ──────────────────────────────────
+if barstate.islast and show_panel
+    label.new(bar_index + 3, high,
+         verdict_icon + "  " + str.tostring(score, "#.#") + "/10",
+         xloc=xloc.bar_index, yloc=yloc.price,
+         color=verdict_bg, textcolor=color.white,
+         style=label.style_label_left, size=size.normal)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// DASHBOARD TABLE (3 columnas × 23 filas)
+// ════════════════════════════════════════════════════════════════════════════════
+
+if show_panel and barstate.islast
+    var table t = table.new(position.top_right, 3, 23,
+         bgcolor=color.new(color.black, 15),
+         border_color=color.new(color.gray, 50), border_width=1,
+         frame_color=color.new(color.gray, 20), frame_width=1)
+
+    c_lb = color.new(color.gray, 75)
+    c_hd = color.new(#1A237E, 20)
+    c_w  = color.white
+
+    // ── Fila 0: Header
+    table.cell(t, 0, 0, "PAIN·01  ·  " + syminfo.ticker + "  ·  " + sec,
+         bgcolor=c_hd, text_color=c_w, text_size=size.small)
+    table.merge_cells(t, 0, 0, 2, 0)
+
+    // ── Fila 1: Veredicto
+    table.cell(t, 0, 1, verdict_icon + "  " + verdict_txt,
+         bgcolor=verdict_bg, text_color=c_w, text_size=size.normal)
+    table.merge_cells(t, 0, 1, 2, 1)
+
+    // ── Fila 2: Score + Peso en cartera
+    table.cell(t, 0, 2, "Score ", bgcolor=c_lb, text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 2, str.tostring(score, "#.#") + " / 10", bgcolor=verdict_bg, text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 2, "Cartera: " + peso_txt, bgcolor=c_lb, text_color=c_w, text_size=size.small)
+
+    // ── Fila 3-5: DIM 1 · Valuación ──────────────────────────────────────────
+    table.cell(t, 0, 3, "▶  DIM 1 · Valuación",
+         bgcolor=c_hd, text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 3, str.tostring(sc_dim1, "#.#") + " / 2",
+         bgcolor=dim_col(sc_dim1), text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 3, "Múltiplos vs sector",
+         bgcolor=c_hd, text_color=c_w, text_size=size.tiny)
+
+    pe_bg = na(f_pe) ? color.new(color.gray, 60) :
+         f_pe < pe_barato ? color.new(#00C853, 45) :
+         f_pe < pe_caro   ? color.new(#F9A825, 45) : color.new(#C62828, 45)
+    table.cell(t, 0, 4, "P/E TTM",   bgcolor=c_lb, text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 4, na(f_pe) ? "N/D" : str.tostring(f_pe, "#.#") + "x",
+         bgcolor=pe_bg, text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 4, "Justo: " + str.tostring(pe_justo, "#") + "x  Caro: " + str.tostring(pe_caro, "#") + "x",
+         bgcolor=c_lb, text_color=c_w, text_size=size.tiny)
+
+    table.cell(t, 0, 5, "EV/EBITDA", bgcolor=c_lb, text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 5, na(f_ev_eb) ? "N/D" : str.tostring(f_ev_eb, "#.#") + "x",
+         bgcolor=traffic_inv(f_ev_eb, ev_ref, ev_ref * 1.5), text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 5, "Ref: " + str.tostring(ev_ref, "#") + "x",
+         bgcolor=c_lb, text_color=c_w, text_size=size.tiny)
+
+    // ── Fila 6-8: DIM 2 · Calidad ────────────────────────────────────────────
+    table.cell(t, 0, 6, "▶  DIM 2 · FCF & ROE",
+         bgcolor=c_hd, text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 6, str.tostring(sc_dim2, "#.#") + " / 2",
+         bgcolor=dim_col(sc_dim2), text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 6, "Calidad de Ganancias",
+         bgcolor=c_hd, text_color=c_w, text_size=size.tiny)
+
+    table.cell(t, 0, 7, "FCF Yield", bgcolor=c_lb, text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 7, na(f_fcfy) ? "N/D" : str.tostring(f_fcfy, "#.##") + "%",
+         bgcolor=traffic(f_fcfy, 6.0, 3.0), text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 7, ">6% Exc  3-6% Ok  <3% ⚠",
+         bgcolor=c_lb, text_color=c_w, text_size=size.tiny)
+
+    table.cell(t, 0, 8, "ROE",       bgcolor=c_lb, text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 8, na(f_roe) ? "N/D" : str.tostring(f_roe, "#.##") + "%",
+         bgcolor=traffic(f_roe, 20.0, 12.0), text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 8, ">20% Excelente  12-20% Bueno",
+         bgcolor=c_lb, text_color=c_w, text_size=size.tiny)
+
+    // ── Fila 9-11: DIM 3 · Salud Financiera ──────────────────────────────────
+    table.cell(t, 0, 9, "▶  DIM 3 · Salud Financiera",
+         bgcolor=c_hd, text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 9, str.tostring(sc_dim3, "#.#") + " / 2",
+         bgcolor=dim_col(sc_dim3), text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 9, "Estructura de Capital",
+         bgcolor=c_hd, text_color=c_w, text_size=size.tiny)
+
+    table.cell(t, 0, 10, "Deuda/EBITDA", bgcolor=c_lb, text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 10, na(f_de_eb) ? "N/D" : str.tostring(f_de_eb, "#.##") + "x",
+         bgcolor=traffic_inv(f_de_eb, 1.5, 3.0), text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 10, "<1.5x Saludable  >5x Crítico",
+         bgcolor=c_lb, text_color=c_w, text_size=size.tiny)
+
+    table.cell(t, 0, 11, "Margen Op.", bgcolor=c_lb, text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 11, na(f_mo) ? "N/D" : str.tostring(f_mo, "#.##") + "%",
+         bgcolor=traffic(f_mo, mo_exc, mo_ok), text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 11, "Ajustado al sector",
+         bgcolor=c_lb, text_color=c_w, text_size=size.tiny)
+
+    // ── Fila 12-14: DIM 4 · Riesgo & ROIC ───────────────────────────────────
+    table.cell(t, 0, 12, "▶  DIM 4 · Riesgo & ROIC",
+         bgcolor=c_hd, text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 12, str.tostring(sc_dim4, "#.#") + " / 2",
+         bgcolor=dim_col(sc_dim4), text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 12, "Beta/Alpha",
+         bgcolor=c_hd, text_color=c_w, text_size=size.tiny)
+
+    table.cell(t, 0, 13, "ROIC",       bgcolor=c_lb, text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 13, na(f_roic) ? "N/D" : str.tostring(f_roic, "#.##") + "%",
+         bgcolor=traffic(f_roic, 25.0, 15.0), text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 13, ">25% Moat  >15% Ok  <WACC Destruye",
+         bgcolor=c_lb, text_color=c_w, text_size=size.tiny)
+
+    atr_bg = atr_pct < 1.5 ? color.new(#00C853, 45) : atr_pct < 3.0 ? color.new(#F9A825, 45) : color.new(#C62828, 45)
+    table.cell(t, 0, 14, "Volatilidad ATR%", bgcolor=c_lb, text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 14, str.tostring(atr_pct, "#.##") + "%",
+         bgcolor=atr_bg, text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 14, "<1.5% Bajo  1.5-5% Medio  >5% Alto",
+         bgcolor=c_lb, text_color=c_w, text_size=size.tiny)
+
+    // ── Fila 15-17: DIM 5 · Técnico ──────────────────────────────────────────
+    table.cell(t, 0, 15, "▶  DIM 5 · Técnico",
+         bgcolor=c_hd, text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 15, str.tostring(sc_dim5, "#.#") + " / 2",
+         bgcolor=dim_col(sc_dim5), text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 15, "Tendencia & Momentum",
+         bgcolor=c_hd, text_color=c_w, text_size=size.tiny)
+
+    tend_txt = close > ema_fast and close > ema_slow ? "Alcista" :
+         close < ema_fast and close < ema_slow ? "Bajista" : "Lateral"
+    tend_bg  = close > ema_fast and close > ema_slow ? color.new(#00C853, 45) :
+         close < ema_fast and close < ema_slow ? color.new(#C62828, 45) : color.new(#F9A825, 45)
+    table.cell(t, 0, 16, "Tendencia EMA", bgcolor=c_lb, text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 16, tend_txt, bgcolor=tend_bg, text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 16, "EMA" + str.tostring(len_fast) + " / EMA" + str.tostring(len_slow),
+         bgcolor=c_lb, text_color=c_w, text_size=size.tiny)
+
+    rsi_txt = rsi_val > 70 ? "Sobrecompra" : rsi_val < 30 ? "Sobreventa" : rsi_val > 50 ? "Alcista" : "Bajista"
+    rsi_bg  = rsi_val < 30 ? color.new(#00C853, 45) : rsi_val > 70 ? color.new(#C62828, 45) :
+         rsi_val > 50 ? color.new(#00C853, 55) : color.new(#C62828, 55)
+    table.cell(t, 0, 17, "RSI (" + str.tostring(len_rsi) + ")", bgcolor=c_lb, text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 17, rsi_txt + "  (" + str.tostring(rsi_val, "#.#") + ")",
+         bgcolor=rsi_bg, text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 17, "<30 SV  50+ Alcista  >70 SC",
+         bgcolor=c_lb, text_color=c_w, text_size=size.tiny)
+
+    // ── Fila 18: Separador resumen ────────────────────────────────────────────
+    table.cell(t, 0, 18, "Resumen por Dimensión",
+         bgcolor=c_hd, text_color=c_w, text_size=size.tiny)
+    table.merge_cells(t, 0, 18, 2, 18)
+
+    // ── Fila 19: Labels D1-D2-D3
+    table.cell(t, 0, 19, "D1 · Valuación",   bgcolor=c_hd, text_color=c_w, text_size=size.tiny)
+    table.cell(t, 1, 19, "D2 · FCF & ROE",   bgcolor=c_hd, text_color=c_w, text_size=size.tiny)
+    table.cell(t, 2, 19, "D3 · Salud Fin.",   bgcolor=c_hd, text_color=c_w, text_size=size.tiny)
+
+    // ── Fila 20: Scores D1-D2-D3
+    table.cell(t, 0, 20, str.tostring(sc_dim1, "#.##") + " / 2",
+         bgcolor=dim_col(sc_dim1), text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 20, str.tostring(sc_dim2, "#.##") + " / 2",
+         bgcolor=dim_col(sc_dim2), text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 20, str.tostring(sc_dim3, "#.##") + " / 2",
+         bgcolor=dim_col(sc_dim3), text_color=c_w, text_size=size.small)
+
+    // ── Fila 21: Labels D4-D5-TOTAL
+    table.cell(t, 0, 21, "D4 · Riesgo",      bgcolor=c_hd, text_color=c_w, text_size=size.tiny)
+    table.cell(t, 1, 21, "D5 · Técnico",      bgcolor=c_hd, text_color=c_w, text_size=size.tiny)
+    table.cell(t, 2, 21, "TOTAL",             bgcolor=c_hd, text_color=c_w, text_size=size.tiny)
+
+    // ── Fila 22: Scores D4-D5-TOTAL
+    table.cell(t, 0, 22, str.tostring(sc_dim4, "#.##") + " / 2",
+         bgcolor=dim_col(sc_dim4), text_color=c_w, text_size=size.small)
+    table.cell(t, 1, 22, str.tostring(sc_dim5, "#.##") + " / 2",
+         bgcolor=dim_col(sc_dim5), text_color=c_w, text_size=size.small)
+    table.cell(t, 2, 22, str.tostring(score, "#.#") + " / 10",
+         bgcolor=verdict_bg, text_color=c_w, text_size=size.normal)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ALERTAS
+// ════════════════════════════════════════════════════════════════════════════════
+
+alertcondition(ta.crossover(score, 7.0),  "PAIN·01 — COMPRAR",   "Score cruza sobre 7 — BARATA")
+alertcondition(ta.crossunder(score, 5.0), "PAIN·01 — VENDER",   "Score cae bajo 5 — CARA")
+alertcondition(ta.crossover(score, 5.0),  "PAIN·01 — MANTENER", "Score cruza sobre 5 — FAIR VALUE")

@@ -1,65 +1,107 @@
-# Indicadores Pine Script - Análisis Fundamental y Técnico
+# Indicadores Pine Script — Análisis Fundamental y Técnico
 
-Este repositorio contiene una colección de scripts avanzados desarrollados en **Pine Script v6** para TradingView. El conjunto se enfoca en proporcionar una visión integral del mercado, combinando métricas fundamentales de empresas con indicadores técnicos de momentum y tendencia.
+Colección de scripts en **Pine Script v6** para TradingView, enfocada en CEDEARs y acciones NYSE/NASDAQ. Combina métricas fundamentales (balance, FCF, ROIC) con indicadores técnicos de tendencia y momentum.
 
----
-
-## 📊 Indicadores Fundamentales Individuales
-
-Diseñados para temporalidad **Diaria (D)**, consumen datos de balances financieros (TTM y FY).
-
-- **02. Price-to-Earnings Ratio (P/E) (`02.PE.pine`)**: Calcula el ratio P/E dinámicamente. Detecta el sector automáticamente para ajustar rangos de referencia (Tecnología, Bancos, Energía).
-- **03. EV/EBITDA Ratio (`03.EV-EBITDA.pine`)**: Mide el valor de empresa frente a su EBITDA. Ideal para comparar valoraciones sin el sesgo de la estructura de capital.
-- **04. Operating Margin (`04.MO.pine`)**: Visualiza el Margen Operativo porcentual para monitorear la eficiencia operativa por industria.
-- **05. Net Debt to EBITDA (`05.ED.pine`)**: Indicador de riesgo financiero. Clasifica la situación en: Sólida, Manejable o de Riesgo.
-- **06. Return on Invested Capital (ROIC) (`06.RO.pine`)**: Mide la eficiencia del capital invertido para generar beneficios. La métrica definitiva de calidad empresarial.
+> **Nota:** Para que `request.financial()` retorne datos se necesita usar el ticker base en su bolsa de origen (ej. `AAPL`, `MELI`), no el CEDEAR local. Requiere suscripción TradingView Pro+ o superior para la mayoría de los campos fundamentales.
 
 ---
 
-## 🚀 Suites y Paneles Integrados
+## Indicadores Fundamentales
 
-Scripts que consolidan múltiples métricas en un solo dashboard visual.
+### `Fundamental.pine` — SuperIntica
+Panel compacto con las 5 métricas fundamentales esenciales. Detecta el sector automáticamente (Tech / Bancos / General) y aplica umbrales ajustados a cada uno.
 
-- **01. Sistema de Confluencia v7 ULTRA + Premarket Scanner (`01.pine`)**: Sistema de 6 indicadores (ASL, EMAs, MACD, RSI, Volumen, Momentum) con scanner de Premarket para gaps y volumen relativo.
-- **07. Fundamental Suite (`07.Fundamental.pine`)**: Panel con P/E, EV/EBITDA, Márgenes, Deuda y ROIC con semáforos por sector.
-- **08. Technical Suite (`08.Tecnico.pine`)**: Dashboard técnico con RSI, EMAs, MACD y flujo institucional.
-- **09. Suite Completa (`09.Complemento.pine`)**: Combina los 5 fundamentales con análisis técnico profundo. Dos paneles independientes.
-- **10. Confluencia v8 + Technical Suite (`10.indicadores.pine`)**: Confluencia de 6 indicadores + dashboard institucional (Concorde/MFI). Ideal para timing de entrada.
+| Métrica | Descripción |
+|---------|-------------|
+| P/E Ratio | Calculado como `precio / EPS TTM` |
+| EV/EBITDA | Valor empresa sobre EBITDA |
+| Margen Operativo | `EBIT / Revenue × 100` |
+| Deuda/EBITDA | Apalancamiento financiero |
+| ROIC | Retorno sobre capital invertido |
 
----
-
-## ⚡ IndicadorPro — Suite Evolutiva
-
-Serie de scripts construidos de forma incremental. **Cada versión agrega una capa nueva sin modificar la anterior.**
-
-Paneles por posición: `top_right` Confluencia · `middle_right` Señal Maestra · `bottom_right` Fundamental · `middle_left` Premarket
-
-| Script | Versión | Qué agrega |
-|--------|---------|------------|
-| `11.indicarPro.pine` | v1 | Confluencia v7 ULTRA + Premarket Scanner + Panel Fundamental integrado |
-| `12.IndicadorPro.pine` | v2 | Estética unificada en tabla fundamental (purple header, emojis de voto) + señal de compra fundamental (0–5 métricas verdes) |
-| `13.IndicadorPro.pine` | v3 | **Señal Maestra** — veredicto único que combina señal técnica y fundamental (Confluencia Total / Solo Técnica / Setup Fundamental / Sin Señal) |
-| `14.IndicadorPro.pine` | v4 | **Divergencias RSI y MACD** — detección automática con labels en el gráfico, líneas entre pivotes y estado en tabla de confluencia |
+Semáforo verde/naranja/rojo por celda. Aviso en rojo si se usa en timeframe intraday.
 
 ---
 
-## 📋 Roadmap — Features Pendientes
+## Suites Técnico + Fundamental
 
-Features propuestas para próximas versiones de IndicadorPro. Cada una va en un script nuevo (v5, v6...).
+### `Complemento.pine` — SuperIndica2
+Indicador técnico puro con panel lateral. Incluye RSI (señales de compra/cautela en el chart), WMA 10, EMA 150/200, MACD, y Concorde/MFI como proxy de flujo institucional.
 
-- [ ] **v5 — Gestión de Riesgo con ATR**: Cálculo automático de Stop Loss y Take Profit usando el ATR. Ratio Riesgo/Recompensa en el gráfico al momento de la señal.
-- [ ] **v6 — FCF Yield + ROE en fundamental**: Agregar Free Cash Flow Yield y Return on Equity al panel fundamental. Mejora la calidad del score de compra fundamental.
-- [ ] **v7 — Confluencia Multi-Timeframe (MTF)**: Verificar la señal en temporalidades superiores (ej. señal en 1H confirmada por D). Reduce falsos positivos drásticamente.
-- [ ] **v8 — Patrones de Velas Japonesas**: Agregar reconocimiento de patrones (Engulfing, Hammer, Doji, Morning Star) como 7mo indicador de confluencia.
-- [ ] **v9 — VWAP con Bandas**: Incorporar VWAP diario/semanal con desviaciones estándar como referencia de precio institucional.
+### `Tecnico.pine` — SuperSuite
+Suite combinada que integra en un solo indicador el panel fundamental (derecha) y el panel técnico (izquierda). MAs en chart (WMA 10, EMA 150, EMA 200) con señales gráficas en cruces de EMA 200 y giros de MACD.
 
 ---
 
-## 🛠️ Requisitos
+## Sistemas de Confluencia
 
-- TradingView (cuenta gratuita o Pro).
-- Temporalidad recomendada: **Diaria (D)** para fundamentales, **5m/15m** para Premarket Scanner.
+### `Indicadores.pine` — Conflue10
+Sistema de confluencia v8 con 6 indicadores simultáneos: ASL 21, EMAs (20/50/150/200), MACD, RSI, Volumen/Momentum y Concorde. Señales de compra/venta filtradas por tendencia (EMA 200) y volumen mínimo. Incluye:
+- Dashboard de confluencia con score configurable
+- Dashboard técnico con estado de cada indicador
+- Dashboard fundamental (P/E, EV/EBITDA, Margen, Deuda, ROIC, FCF Yield, ROE)
+- Premarket scanner con cambio % respecto al cierre anterior
+- Custom types `IndicatorSignal` y `ConfluenceResult`
 
-## ✍️ Autor
+### `IndicadorPro.pine` — IndPro v20
+Suite avanzada en su versión más completa. Agrega sobre Conflue10:
+- **ASL 21** — media híbrida EMA/WMA para timing preciso
+- **MTF** — confluencia en 4 timeframes (15m, 1H, 4H, D)
+- **Divergencias RSI y MACD** — detección automática con labels en chart
+- **Panel premarket** — scanner de gaps y volumen relativo
+- Score de confluencia técnica + fundamental unificado
+
+---
+
+## Suite Definitiva
+
+### `UltimatePro.pine` — UltimatePro v1.0
+El indicador más completo del repositorio. 10 secciones independientes y habilitables:
+
+| Sección | Qué incluye |
+|---------|-------------|
+| Tendencia | ASL 21 + EMAs (20/50/200) + Supertrend |
+| Momentum | MACD + RSI + Stochastic |
+| Volumen | VWAP con bandas de desviación estándar (1σ/2σ) |
+| ADX | Fuerza de tendencia con DI+/DI- |
+| Squeeze | Bollinger + Keltner, detecta expansiones de volatilidad |
+| Koncorde | MFI + Bollinger normalizado, proxy de flujo institucional |
+| Ichimoku | Nube completa con detección de TK cross |
+| Divergencias | RSI y MACD con pivotes configurables |
+| MTF | 4 timeframes (15m/1H/4H/D) con EMA, RSI, MACD, Trend |
+| Fundamental | P/E, EV/EBITDA, Margen Op., Deuda/EBITDA, ROIC, ROE, FCF Yield |
+
+Veredicto final: `MÁXIMA CONFLUENCIA / COMPRA / SESGO ALCISTA / NEUTRAL / VENTA / VENTA CRÍTICA`.
+
+---
+
+## Analista CEDEARs
+
+### `StockerAnlista.pine` — PAIN·01 Stocker Analyst
+Analista de valuación basado en metodología **Stocker**. Puntúa cada acción del 0 al 10 con 5 dimensiones y emite veredicto accionable.
+
+**Score (0–10):**
+
+| Dimensión | Métricas | Pts |
+|-----------|----------|-----|
+| D1 · Valuación | P/E TTM vs sector + EV/EBITDA | 0–2 |
+| D2 · Calidad | FCF Yield + ROE | 0–2 |
+| D3 · Salud Fin. | Deuda/EBITDA + Margen Operativo | 0–2 |
+| D4 · Riesgo | ROIC + Volatilidad ATR% | 0–2 |
+| D5 · Técnico | Tendencia EMA 50/200 + RSI | 0–2 |
+
+**Veredicto:** ≥ 7 → 🟢 BARATA — COMPRAR · 5–7 → 🟡 FAIR VALUE — MANTENER · < 5 → 🔴 CARA — VENDER
+
+Selector de sector con umbrales ajustados por tipo (Tech/Software, Fintech/EM, Financial/Bank, Healthcare, Semiconductores, ETF S&P 500, etc.). Alertas configurables por cruce de score.
+
+---
+
+## Requisitos
+
+- **TradingView Pro+** o superior para datos fundamentales vía `request.financial()`
+- Temporalidad recomendada: **Diario (D)** para todos los indicadores con componente fundamental
+- Timeframe **5m/15m** para el Premarket Scanner de UltimatePro y Conflue10
+
+## Autor
 
 **Diego Santacruz**
